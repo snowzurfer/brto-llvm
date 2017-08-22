@@ -2,10 +2,14 @@
 Modern C++ implementation of the Kaleidoscope LLVM tutorial.
 
 ## Getting Started
+
 ### Prerequisites
 * [CMake](http://cmake.org) 2.8 or later
 * [LLVM](http://releases.llvm.org/)
-* A C++1X compiler
+* A C++17 compiler
+
+#### Linux
+* [libc++](http://libcxx.llvm.org/index.html)
 
 ### Building
 Clone or download the repository to a local folder of your choice and
