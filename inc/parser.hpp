@@ -31,14 +31,7 @@
 #include <istream>
 #include <string>
 #include <map>
-
-// Forward declarations
-namespace brt {
-class ASTBase;
-class ExprAST;
-class PrototypeAST;
-class FunctionAST;
-} // namespace brt
+#include <ast.hpp>
 
 namespace brt {
 
@@ -123,20 +116,20 @@ class Parser {
   void HandleExtern();
   void HandleDefinition();
   void HandleTopLevelExpression();
-  std::unique_ptr<FunctionAST> ParseTopLevelExpr();
-  std::unique_ptr<PrototypeAST> ParseExtern();
-  std::unique_ptr<FunctionAST> ParseDefinition();
-  std::unique_ptr<PrototypeAST> ParsePrototype();
-  std::unique_ptr<ExprAST> ParsePrimary();
-  std::unique_ptr<ExprAST> ParseIdentifierExpr();
-  std::unique_ptr<ExprAST> ParseParenExpr();
-  std::unique_ptr<ExprAST> ParseExpression();
-  std::unique_ptr<ExprAST> ParseBinOpRHS(int expr_prec,
-                                         std::unique_ptr<ExprAST> lhs);
-  std::unique_ptr<ExprAST> ParseNumberExpr();
+  UqPtrASTNode ParseTopLevelExpr();
+  UqPtrASTNode ParseExtern();
+  UqPtrASTNode ParseDefinition();
+  UqPtrASTNode ParsePrototype();
+  UqPtrASTNode ParsePrimary();
+  UqPtrASTNode ParseIdentifierExpr();
+  UqPtrASTNode ParseParenExpr();
+  UqPtrASTNode ParseExpression();
+  UqPtrASTNode ParseBinOpRHS(int expr_prec, UqPtrASTNode lhs);
+  UqPtrASTNode ParseNumberExpr();
 
 }; // class Parser
 
+/// Use type aliasing to improve code syntax
 using PRC = brt::Parser::RC;
 
 } // namespace brt

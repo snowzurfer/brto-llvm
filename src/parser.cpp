@@ -22,7 +22,7 @@
 // OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include <parser.hpp>
-#include <ast.hpp>
+//#include <ast.hpp>
 #include <istream>
 #include <string>
 #include <memory>
@@ -214,20 +214,21 @@ void Parser::HandleTopLevelExpression() {
 }
 
 /// toplevelexpr ::= expression
-std::unique_ptr<FunctionAST> Parser::ParseTopLevelExpr() {
+UqPtrASTNode Parser::ParseTopLevelExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing toplevel\n";
 #endif
   if (auto e = ParseExpression()) {
     // Make an anonymous proto.
-    auto proto = std::make_unique<PrototypeAST>("", std::vector<std::string>());
-    return std::make_unique<FunctionAST>(std::move(proto), std::move(e));
+    auto proto = make_node<ProtoAST>("", std::vector<std::string>());
+    // Then return it into a function
+    return make_node<FuncAST>(std::move(proto), std::move(e));
   }
   return nullptr;
 }
 
 /// external ::= 'extern' prototype
-std::unique_ptr<PrototypeAST> Parser::ParseExtern() {
+UqPtrASTNode Parser::ParseExtern() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing extern\n";
 #endif
@@ -236,7 +237,7 @@ std::unique_ptr<PrototypeAST> Parser::ParseExtern() {
 }
 
 /// definition ::= 'def' prototype expression
-std::unique_ptr<FunctionAST> Parser::ParseDefinition() {
+UqPtrASTNode Parser::ParseDefinition() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing definition\n";
 #endif
@@ -247,7 +248,7 @@ std::unique_ptr<FunctionAST> Parser::ParseDefinition() {
   }
 
   if (auto e = ParseExpression()) {
-    return std::make_unique<FunctionAST>(std::move(proto), std::move(e));
+    return make_node<FuncAST>(std::move(proto), std::move(e));
   }
 
   return nullptr;
@@ -255,19 +256,21 @@ std::unique_ptr<FunctionAST> Parser::ParseDefinition() {
 
 /// prototype
 ///   ::= id '(' id* ')'
-std::unique_ptr<PrototypeAST> Parser::ParsePrototype() {
+UqPtrASTNode Parser::ParsePrototype() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing prototype\n";
 #endif
   if (curr_tok_.type != TokenType::identifier) {
-    return LogErrorP("Expected function name in prototype");
+    //return LogErrorP("Expected function name in prototype");
+    return nullptr;
   }
 
   std::string fn_name = curr_tok_.identifier;
   GetNextToken();
 
   if (curr_tok_.type  != TokenType::l_bracket) {
-    return LogErrorP("Expected '(' in prototype");
+    //return LogErrorP("Expected '(' in prototype");
+    return nullptr;
   }
 
   // Read the list of argument names.
@@ -278,20 +281,21 @@ std::unique_ptr<PrototypeAST> Parser::ParsePrototype() {
     GetNextToken();
   }
   if (curr_tok_.type  != TokenType::r_bracket) {
-    return LogErrorP("Expected ')' in prototype");
+    //return LogErrorP("Expected ')' in prototype");
+    return nullptr;
   }
 
   // success.
   GetNextToken();  // eat ')'.
 
-  return std::make_unique<PrototypeAST>(fn_name, std::move(arg_names));
+  return make_node<ProtoAST>(fn_name, std::move(arg_names));
 }
 
 /// primary
 ///   ::= identifierexpr
 ///   ::= numberexpr
 ///   ::= parenexpr
-std::unique_ptr<ExprAST> Parser::ParsePrimary() {
+UqPtrASTNode Parser::ParsePrimary() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing primary\n";
 #endif
@@ -306,7 +310,8 @@ std::unique_ptr<ExprAST> Parser::ParsePrimary() {
       return ParseParenExpr();
     }
     default: {
-      return LogError("unknown token when expecting an expression");
+      //return LogError("unknown token when expecting an expression");
+      return nullptr;
     }
   }
 }
@@ -314,7 +319,7 @@ std::unique_ptr<ExprAST> Parser::ParsePrimary() {
 /// identifierexpr
 ///   ::= identifier
 ///   ::= identifier '(' expression* ')'
-std::unique_ptr<ExprAST> Parser::ParseIdentifierExpr() {
+UqPtrASTNode Parser::ParseIdentifierExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing identifier expression\n";
 #endif
@@ -323,12 +328,12 @@ std::unique_ptr<ExprAST> Parser::ParseIdentifierExpr() {
   GetNextToken();  // eat identifier.
 
   if (curr_tok_.type != TokenType::l_bracket) { // Simple variable ref.
-    return std::make_unique<VariableExprAST>(std::move(id_name));
+    return make_node<std::string>(std::move(id_name));
   }
 
   // Call.
   GetNextToken();  // eat (
-  std::vector<std::unique_ptr<ExprAST>> args;
+  std::vector<UqPtrASTNode> args;
   if (curr_tok_.type != TokenType::r_bracket) {
     while (1) {
       if (auto arg = ParseExpression()) {
@@ -343,7 +348,8 @@ std::unique_ptr<ExprAST> Parser::ParseIdentifierExpr() {
       }
 
       if (curr_tok_.type != TokenType::comma) {
-        return LogError("Expected ')' or ',' in argument list");
+        //return LogError("Expected ')' or ',' in argument list");
+        return nullptr;
       }
 
       GetNextToken();
@@ -352,12 +358,11 @@ std::unique_ptr<ExprAST> Parser::ParseIdentifierExpr() {
 
   // Eat the ')'.
   GetNextToken();
-
-  return std::make_unique<CallExprAST>(std::move(id_name), std::move(args));
+  return make_node<CallExprAST>(std::move(id_name), std::move(args));
 }
 
 /// parenexpr ::= '(' expression ')'
-std::unique_ptr<ExprAST> Parser::ParseParenExpr() {
+UqPtrASTNode Parser::ParseParenExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing paren expression\n";
 #endif
@@ -368,7 +373,8 @@ std::unique_ptr<ExprAST> Parser::ParseParenExpr() {
   }
 
   if (curr_tok_.type != TokenType::r_bracket) {
-    return LogError("expected ')'");
+    //return LogError("expected ')'");
+    return nullptr;
   }
 
   GetNextToken(); // eat ).
@@ -377,7 +383,7 @@ std::unique_ptr<ExprAST> Parser::ParseParenExpr() {
 
 /// expression
 ///   ::= primary binoprhs
-std::unique_ptr<ExprAST> Parser::ParseExpression() {
+UqPtrASTNode Parser::ParseExpression() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing expression\n";
 #endif
@@ -391,8 +397,7 @@ std::unique_ptr<ExprAST> Parser::ParseExpression() {
 
 /// binoprhs
 ///   ::= ('+' primary)*
-std::unique_ptr<ExprAST> Parser::ParseBinOpRHS(int expr_prec,
-                                              std::unique_ptr<ExprAST> lhs) {
+UqPtrASTNode Parser::ParseBinOpRHS(int expr_prec, UqPtrASTNode lhs) {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing binoprhs\n";
 #endif
@@ -424,17 +429,17 @@ std::unique_ptr<ExprAST> Parser::ParseBinOpRHS(int expr_prec,
     }
 
     // Merge lhs/rhs
-    lhs = std::make_unique<BinaryExprAST>(bin_op, std::move(lhs),
+    lhs = make_node<BinExprAST>(bin_op, std::move(lhs),
                                           std::move(rhs));
   } // go to top of while loop and parse other binary expressions
 }
 
 /// numberexpr ::= number
-std::unique_ptr<ExprAST> Parser::ParseNumberExpr() {
+UqPtrASTNode Parser::ParseNumberExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing nunmberexpr\n";
 #endif
-  auto result = std::make_unique<NumberExprAST>(curr_tok_.val);
+  auto result = make_node<double>(curr_tok_.val);
   GetNextToken(); // consume the number
   return result;
 }

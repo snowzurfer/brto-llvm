@@ -28,132 +28,117 @@
 #include <memory>
 #include <vector>
 #include <iostream>
+#include <variant>
+#include <utility>
 
 namespace brt {
 
-/// Base class for all the expression nodes
-class ExprAST {
+// Forward declarations
+class BinExprAST;
+class CallExprAST;
+class ProtoAST;
+class FuncAST;
+
+/// Type used to represent all the expression production rules
+using ASTNode = std::variant<double, std::string, BinExprAST, CallExprAST,
+                              ProtoAST, FuncAST>;
+
+/// Emplace an instance of type T into a std::variant of type ASTNode
+template <class T, typename... Args>
+auto make_node(Args&&... args) {
+  return std::make_unique<ASTNode>(T{std::forward<Args>(args)...});
+}
+/// Use type aliasing to improve code syntax
+using UqPtrASTNode = std::unique_ptr<ASTNode>;
+using UpASTNodeVec = std::vector<UqPtrASTNode>;
+using StrVec = std::vector<std::string>;
+
+/// Expression class for binary expressions
+class BinExprAST {
 public:
-  ExprAST() = default;
-  ExprAST(const ExprAST &) = default;
-  ExprAST &operator=(const ExprAST &) = default;
-  ExprAST(ExprAST &&) = default;
-  ExprAST &operator=(ExprAST &&) = default;
+  BinExprAST(char op, UqPtrASTNode lhs, UqPtrASTNode rhs)
+      : lhs_{std::move(lhs)}, rhs_{std::move(rhs)}, op_(op) {}
+  BinExprAST() = delete;
 
-  virtual ~ExprAST() = default;
+  BinExprAST &operator=(const BinExprAST &) = delete;
+  BinExprAST(const BinExprAST &) = delete;
+  BinExprAST(BinExprAST &&) = default;
+  BinExprAST &operator=(BinExprAST &&) = default;
+  ~BinExprAST() = default;
 
-}; // class ExprAST
-
-/// Expression class for numeric literals e.g. "2.0"
-class NumberExprAST final : public ExprAST {
-public:
-  explicit NumberExprAST(double val) : ExprAST{}, val_{val} {}
-  NumberExprAST() = delete;
-
-  NumberExprAST &operator=(const NumberExprAST &) = default;
-  NumberExprAST(const NumberExprAST &) = default;
-  NumberExprAST(NumberExprAST &&) = default;
-  NumberExprAST &operator=(NumberExprAST &&) = default;
-  ~NumberExprAST() = default;
+  const auto &lhs() const { return *lhs_.get(); }
+  const auto &rhs() const { return *rhs_.get(); }
+  char op() const { return op_; }
 
 private:
-  double val_;
-
-}; // class NumberExprAST
-
-/// Expression class for referencing a variable, e.g. "a"
-class VariableExprAST final : public ExprAST {
-public:
-  explicit VariableExprAST(std::string name)
-      : ExprAST{}, name_{std::move(name)} {}
-  VariableExprAST() = delete;
-
-  VariableExprAST &operator=(const VariableExprAST &) = default;
-  VariableExprAST(const VariableExprAST &) = default;
-  VariableExprAST(VariableExprAST &&) = default;
-  VariableExprAST &operator=(VariableExprAST &&) = default;
-  ~VariableExprAST() = default;
-
-private:
-  std::string name_;
-
-}; // class VariableExprAST
-
-class BinaryExprAST final : public ExprAST {
-public:
-  BinaryExprAST(char op, std::unique_ptr<ExprAST> lhs,
-                std::unique_ptr<ExprAST> rhs)
-      : ExprAST{}, lhs_{std::move(lhs)}, rhs_{std::move(rhs)}, op_(op) {}
-  BinaryExprAST() = delete;
-
-  BinaryExprAST &operator=(const BinaryExprAST &) = delete;
-  BinaryExprAST(const BinaryExprAST &) = delete;
-  BinaryExprAST(BinaryExprAST &&) = default;
-  BinaryExprAST &operator=(BinaryExprAST &&) = default;
-  ~BinaryExprAST() = default;
-
-private:
-  std::unique_ptr<ExprAST> lhs_, rhs_;
+  UqPtrASTNode lhs_, rhs_;
   char op_;
 
-}; // class BinaryExprAST
-
+}; // class BinExprAST
 
 /// Expression class for function calls
-class CallExprAST final : public ExprAST {
+class CallExprAST {
 public:
-  CallExprAST(std::string callee, std::vector<std::unique_ptr<ExprAST>> args)
-      : ExprAST{}, callee_{std::move(callee)}, args_{std::move(args)} {}
+  CallExprAST(std::string callee, UpASTNodeVec args)
+      : callee_{std::move(callee)}, args_{std::move(args)} {}
   CallExprAST() = delete;
 
   CallExprAST &operator=(const CallExprAST &) = delete;
   CallExprAST(const CallExprAST &) = delete;
+
   CallExprAST(CallExprAST &&) = default;
   CallExprAST &operator=(CallExprAST &&) = default;
   ~CallExprAST() = default;
 
+  const auto &callee() const { return callee_; }
+  const auto &args() const { return args_; }
+
 private:
   std::string callee_;
-  std::vector<std::unique_ptr<ExprAST>> args_;
+  UpASTNodeVec args_;
 
 }; // class CallExprAst
 
 /// Class representing the prototype of a function, i.e. its signature
-class PrototypeAST {
+class ProtoAST {
 public:
-  PrototypeAST(std::string name, std::vector<std::string> args)
+  ProtoAST(std::string name, StrVec args)
       : name_{std::move(name)}, args_{std::move(args)} {}
-  PrototypeAST() = delete;
+  ProtoAST() = delete;
+
+  const auto &name() const { return name_; }
+  const auto &args() const { return args_; }
 
 private:
   std::string name_;
-  std::vector<std::string> args_;
+  StrVec args_;
 
-}; // class PrototypeAST
+}; // class ProtoAST
 
 /// Class representing a function definition
-class FunctionAST {
+class FuncAST {
 public:
-  FunctionAST(std::unique_ptr<PrototypeAST> proto,
-              std::unique_ptr<ExprAST> body)
+  FuncAST(UqPtrASTNode proto, UqPtrASTNode body)
       : proto_{std::move(proto)}, body_{std::move(body)} {}
 
-private:
-  std::unique_ptr<PrototypeAST> proto_;
-  std::unique_ptr<ExprAST> body_;
+  const auto &proto() const { return *proto_.get(); }
+  const auto &body() const { return *body_.get(); }
 
-}; // class FunctionAST
+private:
+  UqPtrASTNode proto_, body_;
+
+}; // class FuncAST
 
 /// LogError* - These are little helper functions for error handling.
 /// TODO Use throw/catch instead
-std::unique_ptr<ExprAST> LogError(const std::string &str) {
-  std::cerr << "Error: " << str << "\n";
-  return nullptr;
-}
-std::unique_ptr<PrototypeAST> LogErrorP(const std::string &str) {
-  std::cerr << "Error: " << str << "\n";
-  return nullptr;
-}
+//UPExprAST LogError(const std::string &str) {
+  //std::cerr << "Error: " << str << "\n";
+  //return nullptr;
+//}
+//ProtoAST::TUPtr LogErrorP(const std::string &str) {
+  //std::cerr << "Error: " << str << "\n";
+  //return nullptr;
+//}
 
 } // namespace brt
 
