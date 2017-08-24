@@ -32,6 +32,7 @@
 #include <sstream>
 #include <cctype>
 #include <cassert>
+#include <stdexcept>
 
 namespace brt {
 
@@ -40,6 +41,15 @@ namespace brt {
 const std::string kCommandTokenDef = "def";
 const std::string kCommandTokenExt = "extern";
 const char kCommentToken = '#';
+const std::string kNameFuncInProtErrStr = "Expected function name in prototype";
+const std::string kLBrackProtoErrStr = "Expected '(' in prototype";
+const std::string kRBrackProtoErrStr = "Expected ')' in prototype";
+const std::string kUnknTokExpectingExprErrStr =
+  "unknown token when expecting an expression";
+const std::string kRBrackCommaArgsErrStr =
+  "Expected ')' or ',' in argument list";
+const std::string kRBrackExpectedErrStr = "expected ')'";
+const std::string kErrMsgPrefix = "## ERR: ";
 
 Lexer::Lexer(std::istream &istream)
     : istream_{istream.rdbuf()}, last_char_{' '} {}
@@ -125,6 +135,13 @@ Token Lexer::GetNextToken() {
 
 //------------------------ Parser ----------------------------------
 
+// Exception classes
+class ParsingErr : public std::runtime_error {
+ public:
+  explicit ParsingErr(const std::string &what_arg)
+      : runtime_error(what_arg) {}
+}; // class ParsingErr
+
 Parser::Parser(std::istream &istream) : lexer_{istream} {
   binop_precedence_['<'] = 10;
   binop_precedence_['+'] = 20;
@@ -137,21 +154,27 @@ Parser::RC Parser::Parse() {
   // Prime the lexer
   GetNextToken();
 
-  switch (curr_tok_.type) {
-    case TokenType::eof:
-      return RC::eof;
-    case TokenType::semicolon: // ignore top-level semicolons.
-      // Consume
-      GetNextToken();
-    case TokenType::def:
-      HandleDefinition();
-      break;
-    case TokenType::ext:
-      HandleExtern();
-      break;
-    default:
-      HandleTopLevelExpression();
-      break;
+  try {
+    switch (curr_tok_.type) {
+      case TokenType::eof:
+        return RC::eof;
+      case TokenType::semicolon: // ignore top-level semicolons.
+        // Consume
+        GetNextToken();
+      case TokenType::def:
+        HandleDefinition();
+        break;
+      case TokenType::ext:
+        HandleExtern();
+        break;
+      default:
+        HandleTopLevelExpression();
+        break;
+    }
+  }
+  catch (const ParsingErr &e) {
+    // TODO Consume until newline
+    std::cerr << kErrMsgPrefix << e.what() << "\n";
   }
 
   return RC::not_eof;
@@ -179,31 +202,19 @@ int Parser::GetCurrentTokenPrecedence() const {
 }
 
 void Parser::HandleExtern() {
-  if (ParseExtern()) {
+    ParseExtern();
     std::cerr << "Parsed an extern\n";
-  } /*else {*/
-    //// Skip token for error recovery.
-    // TODO Consume until newline
-    //GetNextToken();
-  /*}*/
 }
 
 void Parser::HandleDefinition() {
-  if (ParseDefinition()) {
-    std::cerr << "Parsed a function definition\n";
-  }
-  // TODO Consume until newline
+  ParseDefinition();
+  std::cerr << "Parsed a function definition\n";
 }
 
 void Parser::HandleTopLevelExpression() {
   // Evaluate a top-level expression into an anonymous function.
-  if (ParseTopLevelExpr()) {
-    std::cerr << "Parsed a top-level expr\n";
-  } /*else {*/
-    //// Skip token for error recovery.
-    // TODO Consume until newline
-    //GetNextToken();
-  /*}*/
+  ParseTopLevelExpr();
+  std::cerr << "Parsed a top-level expr\n";
 }
 
 /// toplevelexpr ::= expression
@@ -211,13 +222,11 @@ UqPtrASTNode Parser::ParseTopLevelExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing toplevel\n";
 #endif
-  if (auto e = ParseExpression()) {
-    // Make an anonymous proto.
-    auto proto = make_node<ProtoAST>("", std::vector<std::string>());
-    // Then return it into a function
-    return make_node<FuncAST>(std::move(proto), std::move(e));
-  }
-  return nullptr;
+  auto e = ParseExpression();
+  // Make an anonymous proto.
+  auto proto = make_node<ProtoAST>("", std::vector<std::string>());
+  // Then return it into a function
+  return make_node<FuncAST>(std::move(proto), std::move(e));
 }
 
 /// external ::= 'extern' prototype
@@ -236,15 +245,9 @@ UqPtrASTNode Parser::ParseDefinition() {
 #endif
   GetNextToken();  // eat def.
   auto proto = ParsePrototype();
-  if (!proto) {
-    return nullptr;
-  }
 
-  if (auto e = ParseExpression()) {
-    return make_node<FuncAST>(std::move(proto), std::move(e));
-  }
-
-  return nullptr;
+  auto e = ParseExpression();
+  return make_node<FuncAST>(std::move(proto), std::move(e));
 }
 
 /// prototype
@@ -254,16 +257,14 @@ UqPtrASTNode Parser::ParsePrototype() {
   std::cerr << "Parsing prototype\n";
 #endif
   if (curr_tok_.type != TokenType::identifier) {
-    //return LogErrorP("Expected function name in prototype");
-    return nullptr;
+    throw ParsingErr(kNameFuncInProtErrStr);
   }
 
   std::string fn_name = GetTokenVal<std::string>(curr_tok_);
   GetNextToken();
 
   if (curr_tok_.type  != TokenType::l_bracket) {
-    //return LogErrorP("Expected '(' in prototype");
-    return nullptr;
+    throw ParsingErr(kLBrackProtoErrStr);
   }
 
   // Read the list of argument names.
@@ -274,8 +275,7 @@ UqPtrASTNode Parser::ParsePrototype() {
     GetNextToken();
   }
   if (curr_tok_.type  != TokenType::r_bracket) {
-    //return LogErrorP("Expected ')' in prototype");
-    return nullptr;
+    throw ParsingErr(kRBrackProtoErrStr);
   }
 
   // success.
@@ -303,8 +303,7 @@ UqPtrASTNode Parser::ParsePrimary() {
       return ParseParenExpr();
     }
     default: {
-      //return LogError("unknown token when expecting an expression");
-      return nullptr;
+      throw ParsingErr(kUnknTokExpectingExprErrStr);
     }
   }
 }
@@ -329,20 +328,14 @@ UqPtrASTNode Parser::ParseIdentifierExpr() {
   std::vector<UqPtrASTNode> args;
   if (curr_tok_.type != TokenType::r_bracket) {
     while (1) {
-      if (auto arg = ParseExpression()) {
-        args.push_back(std::move(arg));
-      }
-      else {
-        return nullptr;
-      }
+      args.push_back(ParseExpression());
 
       if (curr_tok_.type == TokenType::r_bracket) {
         break;
       }
 
       if (curr_tok_.type != TokenType::comma) {
-        //return LogError("Expected ')' or ',' in argument list");
-        return nullptr;
+        throw ParsingErr(kRBrackCommaArgsErrStr);
       }
 
       GetNextToken();
@@ -361,13 +354,9 @@ UqPtrASTNode Parser::ParseParenExpr() {
 #endif
   GetNextToken(); // eat (.
   auto v = ParseExpression();
-  if (!v) {
-    return nullptr;
-  }
 
   if (curr_tok_.type != TokenType::r_bracket) {
-    //return LogError("expected ')'");
-    return nullptr;
+    throw ParsingErr(kRBrackExpectedErrStr);
   }
 
   GetNextToken(); // eat ).
@@ -381,9 +370,6 @@ UqPtrASTNode Parser::ParseExpression() {
   std::cerr << "Parsing expression\n";
 #endif
   auto lhs = ParsePrimary();
-  if (!lhs) {
-    return nullptr;
-  }
 
   return ParseBinOpRHS(0, std::move(lhs));
 }
@@ -410,9 +396,6 @@ UqPtrASTNode Parser::ParseBinOpRHS(int expr_prec, UqPtrASTNode lhs) {
 
     // Parse the primary expression after the binary operator.
     auto rhs = ParsePrimary();
-    if (!rhs) {
-      return nullptr;
-    }
 
     // If BinOp binds less tightly with RHS than the operator after RHS, let
     // the pending operator take RHS as its LHS.
