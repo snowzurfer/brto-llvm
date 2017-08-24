@@ -41,18 +41,11 @@ const std::string kCommandTokenDef = "def";
 const std::string kCommandTokenExt = "extern";
 const char kCommentToken = '#';
 
-char Token::GetLastChar() const {
-  assert(identifier.size() == 1);
-  return *identifier.begin();
-}
-
 Lexer::Lexer(std::istream &istream)
     : istream_{istream.rdbuf()}, last_char_{' '} {}
 
 /// Retrieve a token from the stream and return it
 Token Lexer::GetNextToken() {
-  std::string identifier_str;
-  double num_val = -1.0;
 
   // Skip any whitespace
   while (std::isspace(last_char_)) {
@@ -61,7 +54,7 @@ Token Lexer::GetNextToken() {
 
   // Idenfitier:: [a-zA-Z][a-zA-Z0-9]
   if (std::isalpha(last_char_)) {
-    identifier_str = last_char_;
+    std::string identifier_str{last_char_};
 
     istream_.get(last_char_);
     while (std::isalnum(last_char_)) {
@@ -70,17 +63,18 @@ Token Lexer::GetNextToken() {
     }
 
     if (identifier_str == kCommandTokenDef) {
-      return {TokenType::def, num_val, identifier_str};
+      return {TokenType::def, std::move(identifier_str)};
     }
     if (identifier_str == kCommandTokenExt) {
-      return {TokenType::ext, num_val, identifier_str};
+      return {TokenType::ext, std::move(identifier_str)};
     }
-    return {TokenType::identifier, num_val, identifier_str};
+    return {TokenType::identifier, std::move(identifier_str)};
   }
 
   // Numbers [0-9.]+
   if (std::isdigit(last_char_) || last_char_ == '.') {
     std::string num_str;
+    double num_val = -1.0;
     do {
       num_str += last_char_;
       istream_.get(last_char_);
@@ -88,7 +82,7 @@ Token Lexer::GetNextToken() {
 
     std::istringstream isstrm (num_str);
     isstrm >> num_val;
-    return {TokenType::number, num_val, identifier_str};
+    return {TokenType::number, num_val};
   }
 
   // Comments
@@ -104,31 +98,29 @@ Token Lexer::GetNextToken() {
 
   // Check for end of file
   if (last_char_ == EOF) {
-    identifier_str = "EOF";
-    return {TokenType::eof, num_val, identifier_str};
+    return {TokenType::eof, static_cast<char>(EOF)};
   }
 
   // Save the last character and then advance before checking what char it was
   assert(isascii(last_char_));
-  identifier_str = last_char_;
   char this_char = last_char_;
   std::cin.get(last_char_);
 
   if (this_char == ';') {
-    return {TokenType::semicolon, num_val, identifier_str};
+    return {TokenType::semicolon, this_char};
   }
   if (this_char == '(') {
-    return {TokenType::l_bracket, num_val, identifier_str};
+    return {TokenType::l_bracket, this_char};
   }
   if (this_char == ')') {
-    return {TokenType::r_bracket, num_val, identifier_str};
+    return {TokenType::r_bracket, this_char};
   }
   if (this_char == ',') {
-    return {TokenType::comma, num_val, identifier_str};
+    return {TokenType::comma, this_char};
   }
 
   // If all other tests fail, set as its ascii value
-  return {TokenType::generic_ascii, num_val, identifier_str};
+  return {TokenType::generic_ascii, this_char};
 }
 
 //------------------------ Parser ----------------------------------
@@ -171,10 +163,11 @@ void Parser::GetNextToken() {
 
 /// Get the precedence of the pending binary operator token.
 int Parser::GetCurrentTokenPrecedence() const {
-  char last_char = curr_tok_.GetLastChar();
   if (curr_tok_.type != TokenType::generic_ascii) {
     return -1;
   }
+
+  char last_char = GetTokenVal<char>(curr_tok_);
 
   // Make sure it's a declared binop.
   int tok_prec = binop_precedence_.at(last_char);
@@ -265,7 +258,7 @@ UqPtrASTNode Parser::ParsePrototype() {
     return nullptr;
   }
 
-  std::string fn_name = curr_tok_.identifier;
+  std::string fn_name = GetTokenVal<std::string>(curr_tok_);
   GetNextToken();
 
   if (curr_tok_.type  != TokenType::l_bracket) {
@@ -277,7 +270,7 @@ UqPtrASTNode Parser::ParsePrototype() {
   std::vector<std::string> arg_names;
   GetNextToken();
   while (curr_tok_.type == TokenType::identifier) {
-    arg_names.push_back(curr_tok_.identifier);
+    arg_names.push_back(GetTokenVal<std::string>(curr_tok_));
     GetNextToken();
   }
   if (curr_tok_.type  != TokenType::r_bracket) {
@@ -288,7 +281,7 @@ UqPtrASTNode Parser::ParsePrototype() {
   // success.
   GetNextToken();  // eat ')'.
 
-  return make_node<ProtoAST>(fn_name, std::move(arg_names));
+  return make_node<ProtoAST>(std::move(fn_name), std::move(arg_names));
 }
 
 /// primary
@@ -323,7 +316,7 @@ UqPtrASTNode Parser::ParseIdentifierExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing identifier expression\n";
 #endif
-  std::string id_name = curr_tok_.identifier;
+  std::string id_name = GetTokenVal<std::string>(curr_tok_);
 
   GetNextToken();  // eat identifier.
 
@@ -412,7 +405,7 @@ UqPtrASTNode Parser::ParseBinOpRHS(int expr_prec, UqPtrASTNode lhs) {
     }
 
     // Okay, we know this is a binop.
-    auto bin_op = curr_tok_.GetLastChar();
+    auto bin_op = GetTokenVal<char>(curr_tok_);
     GetNextToken();  // eat binop
 
     // Parse the primary expression after the binary operator.
@@ -439,7 +432,7 @@ UqPtrASTNode Parser::ParseNumberExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing nunmberexpr\n";
 #endif
-  auto result = make_node<double>(curr_tok_.val);
+  auto result = make_node<double>(GetTokenVal<double>(curr_tok_));
   GetNextToken(); // consume the number
   return result;
 }

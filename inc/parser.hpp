@@ -32,6 +32,8 @@
 #include <string>
 #include <map>
 #include <ast.hpp>
+#include <variant>
+#include <utility>
 
 namespace brt {
 
@@ -58,11 +60,16 @@ enum class TokenType {
 
 struct Token {
   TokenType type;
-  double val;
-  std::string identifier;
-
-  char GetLastChar() const;
+  std::variant<double, std::string, char> val;
 }; // class Token
+
+/// Utility function template to retrieve a token value given its type
+template <typename T>
+const T &GetTokenVal(const Token &tok) {
+  return std::get<T>(tok.val);
+}
+/// TODO Do away with TokenType and use visitor to retrieve the value of the
+///      token depending on its type
 
 class Lexer {
  public:
