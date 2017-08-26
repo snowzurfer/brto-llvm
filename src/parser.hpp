@@ -83,20 +83,26 @@ class Lexer {
   Lexer &operator()(Lexer &&) = delete;
   ~Lexer() = default;
 
-  Token GetNextToken();
+  const Token &GetNextToken();
+  const Token &GetCurrToken();
   int GetCurrentTokenPrecedence() const;
 
+  using TSPtr = std::shared_ptr<Lexer>;
+
  private:
+  Token GetNextTokenInternal();
+
   std::istream istream_;
   char last_char_;
+  Token curr_tok_;
 
 }; // class Lexer
 
 class Parser {
  public:
-  Parser(std::istream &istream);
+  Parser(const Lexer::TSPtr &lexer);
 
-  // Rule of 7
+  // rule of 7
   Parser() = delete;
   Parser(const Parser &) = delete;
   Parser &operator()(const Parser &) = delete;
@@ -104,40 +110,36 @@ class Parser {
   Parser &operator()(Parser &&) = delete;
   ~Parser() = default;
 
-  enum class RC {
-    not_eof,
-    eof,
-  }; // enum class RC
-
   /// Parse one production or return nullptr if the production was not valid
-  RC Parse();
+  UPtrASTNode Parse();
 
  private:
-  Lexer lexer_;
-  Token curr_tok_;
+  Lexer::TSPtr lexer_;
   // TODO Change how the map is acquired
   std::map<char, int> binop_precedence_;
+  Token curr_tok_;
 
   void GetNextToken();
   int GetCurrentTokenPrecedence() const;
-  void HandleExtern();
-  void HandleDefinition();
-  void HandleTopLevelExpression();
-  UqPtrASTNode ParseTopLevelExpr();
-  UqPtrASTNode ParseExtern();
-  UqPtrASTNode ParseDefinition();
-  UqPtrASTNode ParsePrototype();
-  UqPtrASTNode ParsePrimary();
-  UqPtrASTNode ParseIdentifierExpr();
-  UqPtrASTNode ParseParenExpr();
-  UqPtrASTNode ParseExpression();
-  UqPtrASTNode ParseBinOpRHS(int expr_prec, UqPtrASTNode lhs);
-  UqPtrASTNode ParseNumberExpr();
+  UPtrASTNode ParseTopLevelExpr();
+  UPtrASTNode ParseExtern();
+  UPtrASTNode ParseDefinition();
+  UPtrASTNode ParsePrototype();
+  UPtrASTNode ParsePrimary();
+  UPtrASTNode ParseIdentifierExpr();
+  UPtrASTNode ParseParenExpr();
+  UPtrASTNode ParseExpression();
+  UPtrASTNode ParseBinOpRHS(int expr_prec, UPtrASTNode lhs);
+  UPtrASTNode ParseNumberExpr();
 
 }; // class Parser
 
-/// Use type aliasing to improve code syntax
-using PRC = brt::Parser::RC;
+// Exception classes
+class ParsingErr : public std::runtime_error {
+ public:
+  explicit ParsingErr(const std::string &what_arg)
+      : runtime_error(what_arg) {}
+}; // class ParsingErr
 
 } // namespace brt
 

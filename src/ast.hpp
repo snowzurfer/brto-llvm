@@ -34,14 +34,16 @@
 namespace brt {
 
 // Forward declarations
+class NumLitExprAST;
+class VarExprAST;
 class BinExprAST;
 class CallExprAST;
 class ProtoAST;
 class FuncAST;
 
 /// Type used to represent all the expression production rules
-using ASTNode = std::variant<double, std::string, BinExprAST, CallExprAST,
-                              ProtoAST, FuncAST>;
+using ASTNode = std::variant<NumLitExprAST, VarExprAST, BinExprAST, CallExprAST,
+                             ProtoAST, FuncAST>;
 
 /// Emplace an instance of type T into a std::variant of type ASTNode
 template <class T, typename... Args>
@@ -49,14 +51,54 @@ auto make_node(Args&&... args) {
   return std::make_unique<ASTNode>(T{std::forward<Args>(args)...});
 }
 /// Use type aliasing to improve code syntax
-using UqPtrASTNode = std::unique_ptr<ASTNode>;
-using UpASTNodeVec = std::vector<UqPtrASTNode>;
+using UPtrASTNode = std::unique_ptr<ASTNode>;
+using UPtrASTNodeVec = std::vector<UPtrASTNode>;
 using StrVec = std::vector<std::string>;
+
+/// Expression for numeric literals
+class NumLitExprAST {
+ public:
+  NumLitExprAST(double val)
+      : val_{val} {}
+  NumLitExprAST() = default;
+
+  NumLitExprAST &operator=(const NumLitExprAST &) = delete;
+  NumLitExprAST(const NumLitExprAST &) = delete;
+  NumLitExprAST(NumLitExprAST &&) = default;
+  NumLitExprAST &operator=(NumLitExprAST &&) = default;
+  ~NumLitExprAST() = default;
+
+  const auto &val() const { return val_; }
+
+private:
+  double val_;
+
+}; // class NumLitExprAST
+
+/// Expression for variables
+class VarExprAST {
+ public:
+  VarExprAST(std::string name)
+      : name_{std::move(name)} {}
+  VarExprAST() = delete;
+
+  VarExprAST &operator=(const VarExprAST &) = delete;
+  VarExprAST(const VarExprAST &) = delete;
+  VarExprAST(VarExprAST &&) = default;
+  VarExprAST &operator=(VarExprAST &&) = default;
+  ~VarExprAST() = default;
+
+  const auto &name() const { return name_; }
+
+private:
+  std::string name_;
+
+}; // class VarExprAST
 
 /// Expression class for binary expressions
 class BinExprAST {
 public:
-  BinExprAST(char op, UqPtrASTNode lhs, UqPtrASTNode rhs)
+  BinExprAST(char op, UPtrASTNode lhs, UPtrASTNode rhs)
       : lhs_{std::move(lhs)}, rhs_{std::move(rhs)}, op_(op) {}
   BinExprAST() = delete;
 
@@ -71,7 +113,7 @@ public:
   char op() const { return op_; }
 
 private:
-  UqPtrASTNode lhs_, rhs_;
+  UPtrASTNode lhs_, rhs_;
   char op_;
 
 }; // class BinExprAST
@@ -79,7 +121,7 @@ private:
 /// Expression class for function calls
 class CallExprAST {
 public:
-  CallExprAST(std::string callee, UpASTNodeVec args)
+  CallExprAST(std::string callee, UPtrASTNodeVec args)
       : callee_{std::move(callee)}, args_{std::move(args)} {}
   CallExprAST() = delete;
 
@@ -95,7 +137,7 @@ public:
 
 private:
   std::string callee_;
-  UpASTNodeVec args_;
+  UPtrASTNodeVec args_;
 
 }; // class CallExprAst
 
@@ -118,14 +160,14 @@ private:
 /// Class representing a function definition
 class FuncAST {
 public:
-  FuncAST(UqPtrASTNode proto, UqPtrASTNode body)
+  FuncAST(UPtrASTNode proto, UPtrASTNode body)
       : proto_{std::move(proto)}, body_{std::move(body)} {}
 
   const auto &proto() const { return *proto_.get(); }
   const auto &body() const { return *body_.get(); }
 
 private:
-  UqPtrASTNode proto_, body_;
+  UPtrASTNode proto_, body_;
 
 }; // class FuncAST
 

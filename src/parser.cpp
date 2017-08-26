@@ -41,22 +41,13 @@ namespace brt {
 const std::string kCommandTokenDef = "def";
 const std::string kCommandTokenExt = "extern";
 const char kCommentToken = '#';
-const std::string kNameFuncInProtErrStr = "Expected function name in prototype";
-const std::string kLBrackProtoErrStr = "Expected '(' in prototype";
-const std::string kRBrackProtoErrStr = "Expected ')' in prototype";
-const std::string kUnknTokExpectingExprErrStr =
-  "unknown token when expecting an expression";
-const std::string kRBrackCommaArgsErrStr =
-  "Expected ')' or ',' in argument list";
-const std::string kRBrackExpectedErrStr = "expected ')'";
 const std::string kErrMsgPrefix = "## ERR: ";
 
 Lexer::Lexer(std::istream &istream)
     : istream_{istream.rdbuf()}, last_char_{' '} {}
 
 /// Retrieve a token from the stream and return it
-Token Lexer::GetNextToken() {
-
+Token Lexer::GetNextTokenInternal() {
   // Skip any whitespace
   while (std::isspace(last_char_)) {
     istream_.get(last_char_);
@@ -133,16 +124,28 @@ Token Lexer::GetNextToken() {
   return {TokenType::generic_ascii, this_char};
 }
 
+const Token &Lexer::GetNextToken() {
+  curr_tok_ = GetNextTokenInternal();
+
+  return curr_tok_;
+}
+
+const Token &Lexer::GetCurrToken() {
+  return curr_tok_;
+}
+
 //------------------------ Parser ----------------------------------
 
-// Exception classes
-class ParsingErr : public std::runtime_error {
- public:
-  explicit ParsingErr(const std::string &what_arg)
-      : runtime_error(what_arg) {}
-}; // class ParsingErr
+const std::string kNameFuncInProtErrStr = "Expected function name in prototype";
+const std::string kLBrackProtoErrStr = "Expected '(' in prototype";
+const std::string kRBrackProtoErrStr = "Expected ')' in prototype";
+const std::string kUnknTokExpectingExprErrStr =
+  "unknown token when expecting an expression";
+const std::string kRBrackCommaArgsErrStr =
+  "Expected ')' or ',' in argument list";
+const std::string kRBrackExpectedErrStr = "expected ')'";
 
-Parser::Parser(std::istream &istream) : lexer_{istream} {
+Parser::Parser(const Lexer::TSPtr &lexer) : lexer_{lexer} {
   binop_precedence_['<'] = 10;
   binop_precedence_['+'] = 20;
   binop_precedence_['-'] = 20;
@@ -150,38 +153,23 @@ Parser::Parser(std::istream &istream) : lexer_{istream} {
 }
 
 /// top ::= definition | external | expression | ';'
-Parser::RC Parser::Parse() {
-  // Prime the lexer
-  GetNextToken();
+UPtrASTNode Parser::Parse() {
+  // Retrieve a cache of the current token
+  curr_tok_ = lexer_->GetCurrToken();
 
-  try {
-    switch (curr_tok_.type) {
-      case TokenType::eof:
-        return RC::eof;
-      case TokenType::semicolon: // ignore top-level semicolons.
-        // Consume
-        GetNextToken();
-      case TokenType::def:
-        HandleDefinition();
-        break;
-      case TokenType::ext:
-        HandleExtern();
-        break;
-      default:
-        HandleTopLevelExpression();
-        break;
-    }
+  switch (curr_tok_.type) {
+    case TokenType::def:
+      return ParseDefinition();
+    case TokenType::ext:
+      return ParseExtern();
+    default:
+      return ParseTopLevelExpr();
+      break;
   }
-  catch (const ParsingErr &e) {
-    // TODO Consume until newline
-    std::cerr << kErrMsgPrefix << e.what() << "\n";
-  }
-
-  return RC::not_eof;
 }
 
 void Parser::GetNextToken() {
-  curr_tok_ = lexer_.GetNextToken();
+  curr_tok_ = lexer_->GetNextToken();
 }
 
 /// Get the precedence of the pending binary operator token.
@@ -201,24 +189,8 @@ int Parser::GetCurrentTokenPrecedence() const {
   return tok_prec;
 }
 
-void Parser::HandleExtern() {
-    ParseExtern();
-    std::cerr << "Parsed an extern\n";
-}
-
-void Parser::HandleDefinition() {
-  ParseDefinition();
-  std::cerr << "Parsed a function definition\n";
-}
-
-void Parser::HandleTopLevelExpression() {
-  // Evaluate a top-level expression into an anonymous function.
-  ParseTopLevelExpr();
-  std::cerr << "Parsed a top-level expr\n";
-}
-
 /// toplevelexpr ::= expression
-UqPtrASTNode Parser::ParseTopLevelExpr() {
+UPtrASTNode Parser::ParseTopLevelExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing toplevel\n";
 #endif
@@ -230,7 +202,7 @@ UqPtrASTNode Parser::ParseTopLevelExpr() {
 }
 
 /// external ::= 'extern' prototype
-UqPtrASTNode Parser::ParseExtern() {
+UPtrASTNode Parser::ParseExtern() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing extern\n";
 #endif
@@ -239,7 +211,7 @@ UqPtrASTNode Parser::ParseExtern() {
 }
 
 /// definition ::= 'def' prototype expression
-UqPtrASTNode Parser::ParseDefinition() {
+UPtrASTNode Parser::ParseDefinition() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing definition\n";
 #endif
@@ -252,7 +224,7 @@ UqPtrASTNode Parser::ParseDefinition() {
 
 /// prototype
 ///   ::= id '(' id* ')'
-UqPtrASTNode Parser::ParsePrototype() {
+UPtrASTNode Parser::ParsePrototype() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing prototype\n";
 #endif
@@ -288,7 +260,7 @@ UqPtrASTNode Parser::ParsePrototype() {
 ///   ::= identifierexpr
 ///   ::= numberexpr
 ///   ::= parenexpr
-UqPtrASTNode Parser::ParsePrimary() {
+UPtrASTNode Parser::ParsePrimary() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing primary\n";
 #endif
@@ -311,7 +283,7 @@ UqPtrASTNode Parser::ParsePrimary() {
 /// identifierexpr
 ///   ::= identifier
 ///   ::= identifier '(' expression* ')'
-UqPtrASTNode Parser::ParseIdentifierExpr() {
+UPtrASTNode Parser::ParseIdentifierExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing identifier expression\n";
 #endif
@@ -320,12 +292,12 @@ UqPtrASTNode Parser::ParseIdentifierExpr() {
   GetNextToken();  // eat identifier.
 
   if (curr_tok_.type != TokenType::l_bracket) { // Simple variable ref.
-    return make_node<std::string>(std::move(id_name));
+    return make_node<VarExprAST>(std::move(id_name));
   }
 
   // Call.
   GetNextToken();  // eat (
-  std::vector<UqPtrASTNode> args;
+  std::vector<UPtrASTNode> args;
   if (curr_tok_.type != TokenType::r_bracket) {
     while (1) {
       args.push_back(ParseExpression());
@@ -348,7 +320,7 @@ UqPtrASTNode Parser::ParseIdentifierExpr() {
 }
 
 /// parenexpr ::= '(' expression ')'
-UqPtrASTNode Parser::ParseParenExpr() {
+UPtrASTNode Parser::ParseParenExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing paren expression\n";
 #endif
@@ -365,7 +337,7 @@ UqPtrASTNode Parser::ParseParenExpr() {
 
 /// expression
 ///   ::= primary binoprhs
-UqPtrASTNode Parser::ParseExpression() {
+UPtrASTNode Parser::ParseExpression() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing expression\n";
 #endif
@@ -376,7 +348,7 @@ UqPtrASTNode Parser::ParseExpression() {
 
 /// binoprhs
 ///   ::= ('+' primary)*
-UqPtrASTNode Parser::ParseBinOpRHS(int expr_prec, UqPtrASTNode lhs) {
+UPtrASTNode Parser::ParseBinOpRHS(int expr_prec, UPtrASTNode lhs) {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing binoprhs\n";
 #endif
@@ -411,12 +383,14 @@ UqPtrASTNode Parser::ParseBinOpRHS(int expr_prec, UqPtrASTNode lhs) {
 }
 
 /// numberexpr ::= number
-UqPtrASTNode Parser::ParseNumberExpr() {
+UPtrASTNode Parser::ParseNumberExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing nunmberexpr\n";
 #endif
-  auto result = make_node<double>(GetTokenVal<double>(curr_tok_));
+  auto result = make_node<NumLitExprAST>(GetTokenVal<double>(curr_tok_));
+
   GetNextToken(); // consume the number
+
   return result;
 }
 

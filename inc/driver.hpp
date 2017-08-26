@@ -21,23 +21,53 @@
 // TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
 // OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#include <iostream>
+#ifndef BRTO_DRIVER_HPP
+#define BRTO_DRIVER_HPP
+
 #include <memory>
-#include <utility>
-#include <parser.hpp>
-#include <driver.hpp>
+#include <map>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
 
-void MainLoop(brt::Driver &driver) {
-  std::cerr << "> ";
-  while (driver.Run() != DrRC::eof) {
-    std::cerr << "> ";
-  }
-}
+// Forward declarations
+namespace brt {
 
-int main(int argc, char *argv[]) {
-  brt::Driver driver{std::cin};
+class Lexer;
+class Parser;
 
-  // Run the main "interpreter loop"
-  MainLoop(driver);
-  return 0;
-}
+} // namespace brt
+
+namespace brt {
+
+class Driver {
+ public:
+  Driver(std::istream &istream);
+
+  Driver() = delete; // Unnecessary but good bc of rule of 5
+  Driver &operator=(const Driver &) = delete;
+  Driver(const Driver &) = delete;
+  Driver(Driver &&) = delete;
+  Driver &operator=(Driver &&) = delete;
+  ~Driver() = default;
+
+  // Return condition
+  enum class RC { eof, not_eof }; // enum class RC
+
+  RC Run();
+
+ private:
+  std::shared_ptr<Lexer> lexer_;
+  std::unique_ptr<Parser> parser_;
+  std::unique_ptr<llvm::LLVMContext> context_;
+  std::unique_ptr<llvm::IRBuilder<>> builder_;
+  std::unique_ptr<llvm::Module> module_;
+  std::map<std::string, llvm::Value *> named_values_;
+
+}; // class Driver
+
+} // namespace brt
+
+using DrRC = brt::Driver::RC;
+
+#endif
