@@ -85,7 +85,7 @@ add_definitions(${LLVM_DEFINITIONS})
 message(STATUS ${LLVM_DEFINITIONS})
 # Find the libraries that correspond to the LLVM components
 # that we wish to use
-llvm_map_components_to_libnames(LLVM_LIBS core support demangle)
+llvm_map_components_to_libnames(LLVM_LIBS core support demangle mcjit native)
 message(STATUS ${LLVM_LIBS})
 
 # Create the main program
@@ -96,8 +96,10 @@ set(BRTO_INC_DIR ${CMAKE_SOURCE_DIR}/inc)
 set(BRTO_SRC_DIR ${CMAKE_SOURCE_DIR}/src)
 set(BRTO_HDRS
   ${BRTO_SRC_DIR}/ast.hpp
+  ${BRTO_INC_DIR}/ast_types.hpp
   ${BRTO_SRC_DIR}/parser.hpp
   ${BRTO_SRC_DIR}/visitor.hpp
+  ${BRTO_SRC_DIR}/KaleidoscopeJIT.h
   ${BRTO_INC_DIR}/driver.hpp)
 set(BRTO_SRCS
   ${BRTO_SRC_DIR}/parser.cpp
@@ -107,3 +109,5 @@ set(BRTO_SRCS
 add_executable(brto ${BRTO_HDRS} ${BRTO_SRCS})
 target_link_libraries(brto
   ${LLVM_LIBS})
+
+add_definitions(-D_BRTO_DEBUG_LVL_2)

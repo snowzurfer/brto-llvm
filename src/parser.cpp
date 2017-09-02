@@ -1,4 +1,3 @@
-// MIT License
 //
 // Simple compiler front-end for LLVM written as a learning exercise.
 // Copyright © 2017 Alberto Taiuti
@@ -22,7 +21,6 @@
 // OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include <parser.hpp>
-//#include <ast.hpp>
 #include <istream>
 #include <string>
 #include <memory>
@@ -30,9 +28,10 @@
 #include <array>
 #include <vector>
 #include <sstream>
-#include <cctype>
 #include <cassert>
-#include <stdexcept>
+#include <iostream>
+#include <ast.hpp>
+
 
 namespace brt {
 
@@ -41,7 +40,6 @@ namespace brt {
 const std::string kCommandTokenDef = "def";
 const std::string kCommandTokenExt = "extern";
 const char kCommentToken = '#';
-const std::string kErrMsgPrefix = "## ERR: ";
 
 Lexer::Lexer(std::istream &istream)
     : istream_{istream.rdbuf()}, last_char_{' '} {}
@@ -136,7 +134,9 @@ const Token &Lexer::GetCurrToken() {
 
 //------------------------ Parser ----------------------------------
 
-const std::string kNameFuncInProtErrStr = "Expected function name in prototype";
+const std::string kAnonExprName = "__anon_expr";
+const std::string kExpectedNameFuncInProtErrStr =
+  "Expected function name in prototype";
 const std::string kLBrackProtoErrStr = "Expected '(' in prototype";
 const std::string kRBrackProtoErrStr = "Expected ')' in prototype";
 const std::string kUnknTokExpectingExprErrStr =
@@ -144,28 +144,18 @@ const std::string kUnknTokExpectingExprErrStr =
 const std::string kRBrackCommaArgsErrStr =
   "Expected ')' or ',' in argument list";
 const std::string kRBrackExpectedErrStr = "expected ')'";
+const std::string kCouldntParseTopLvlExpr = "Could not parse Top Lvl Expr";
+const std::string kCouldntParseDef = "Could not parse Def";
+const std::string kCouldntParseIdentExpr = "Couldn't parse Identifier Expr";
+const std::string kCouldntParseParenExpr = "Couldn't parse Paren Expr";
+const std::string kCouldntParseExpr = "Couldn't parse Expr";
+const std::string kCouldntParseBinOpExpr = "Couldn't parse Binop Expr";
 
-Parser::Parser(const Lexer::TSPtr &lexer) : lexer_{lexer} {
+Parser::Parser(Lexer::SP lexer) : lexer_{std::move(lexer)} {
   binop_precedence_['<'] = 10;
   binop_precedence_['+'] = 20;
   binop_precedence_['-'] = 20;
   binop_precedence_['*'] = 40; // highest.
-}
-
-/// top ::= definition | external | expression | ';'
-UPtrASTNode Parser::Parse() {
-  // Retrieve a cache of the current token
-  curr_tok_ = lexer_->GetCurrToken();
-
-  switch (curr_tok_.type) {
-    case TokenType::def:
-      return ParseDefinition();
-    case TokenType::ext:
-      return ParseExtern();
-    default:
-      return ParseTopLevelExpr();
-      break;
-  }
 }
 
 void Parser::GetNextToken() {
@@ -190,19 +180,22 @@ int Parser::GetCurrentTokenPrecedence() const {
 }
 
 /// toplevelexpr ::= expression
-UPtrASTNode Parser::ParseTopLevelExpr() {
+UPASTNode Parser::ParseTopLevelExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing toplevel\n";
 #endif
-  auto e = ParseExpression();
-  // Make an anonymous proto.
-  auto proto = make_node<ProtoAST>("", std::vector<std::string>());
-  // Then return it into a function
-  return make_node<FuncAST>(std::move(proto), std::move(e));
+  if (auto e = ParseExpression()) {;
+    // Make an anonymous proto.
+    auto proto = make_node<ProtoAST>(kAnonExprName, std::vector<std::string>());
+    // Then return it into a function
+    return make_node<FuncAST>(std::move(proto), std::move(e));
+  }
+
+  return LogError<UPASTNode>(kCouldntParseTopLvlExpr);
 }
 
 /// external ::= 'extern' prototype
-UPtrASTNode Parser::ParseExtern() {
+UPASTNode Parser::ParseExtern() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing extern\n";
 #endif
@@ -211,32 +204,39 @@ UPtrASTNode Parser::ParseExtern() {
 }
 
 /// definition ::= 'def' prototype expression
-UPtrASTNode Parser::ParseDefinition() {
+UPASTNode Parser::ParseDefinition() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing definition\n";
 #endif
   GetNextToken();  // eat def.
   auto proto = ParsePrototype();
+  if (!proto) {
+    return LogError<UPASTNode>(kCouldntParseDef);
+  }
 
   auto e = ParseExpression();
+  if (!e) {
+    return LogError<UPASTNode>(kCouldntParseDef);
+  }
+
   return make_node<FuncAST>(std::move(proto), std::move(e));
 }
 
 /// prototype
 ///   ::= id '(' id* ')'
-UPtrASTNode Parser::ParsePrototype() {
+UPASTNode Parser::ParsePrototype() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing prototype\n";
 #endif
   if (curr_tok_.type != TokenType::identifier) {
-    throw ParsingErr(kNameFuncInProtErrStr);
+    return LogError<UPASTNode>(kExpectedNameFuncInProtErrStr);
   }
 
   std::string fn_name = GetTokenVal<std::string>(curr_tok_);
   GetNextToken();
 
   if (curr_tok_.type  != TokenType::l_bracket) {
-    throw ParsingErr(kLBrackProtoErrStr);
+    return LogError<UPASTNode>(kLBrackProtoErrStr);
   }
 
   // Read the list of argument names.
@@ -247,7 +247,7 @@ UPtrASTNode Parser::ParsePrototype() {
     GetNextToken();
   }
   if (curr_tok_.type  != TokenType::r_bracket) {
-    throw ParsingErr(kRBrackProtoErrStr);
+    return LogError<UPASTNode>(kRBrackProtoErrStr);
   }
 
   // success.
@@ -260,10 +260,12 @@ UPtrASTNode Parser::ParsePrototype() {
 ///   ::= identifierexpr
 ///   ::= numberexpr
 ///   ::= parenexpr
-UPtrASTNode Parser::ParsePrimary() {
+UPExprAST Parser::ParsePrimary() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing primary\n";
 #endif
+  curr_tok_ = lexer_->GetCurrToken();
+
   switch (curr_tok_.type) {
     case TokenType::identifier: {
         return ParseIdentifierExpr();
@@ -275,7 +277,7 @@ UPtrASTNode Parser::ParsePrimary() {
       return ParseParenExpr();
     }
     default: {
-      throw ParsingErr(kUnknTokExpectingExprErrStr);
+      return LogError<UPExprAST>(kUnknTokExpectingExprErrStr);
     }
   }
 }
@@ -283,7 +285,7 @@ UPtrASTNode Parser::ParsePrimary() {
 /// identifierexpr
 ///   ::= identifier
 ///   ::= identifier '(' expression* ')'
-UPtrASTNode Parser::ParseIdentifierExpr() {
+UPExprAST Parser::ParseIdentifierExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing identifier expression\n";
 #endif
@@ -292,22 +294,27 @@ UPtrASTNode Parser::ParseIdentifierExpr() {
   GetNextToken();  // eat identifier.
 
   if (curr_tok_.type != TokenType::l_bracket) { // Simple variable ref.
-    return make_node<VarExprAST>(std::move(id_name));
+    return make_expr<VarExprAST>(std::move(id_name));
   }
 
   // Call.
   GetNextToken();  // eat (
-  std::vector<UPtrASTNode> args;
+  UPExprASTVec args;
   if (curr_tok_.type != TokenType::r_bracket) {
     while (1) {
-      args.push_back(ParseExpression());
+      if (auto arg = ParseExpression()) {
+        args.push_back(std::move(arg));
+      }
+      else {
+        return LogError<UPExprAST>(kCouldntParseIdentExpr);
+      }
 
       if (curr_tok_.type == TokenType::r_bracket) {
         break;
       }
 
       if (curr_tok_.type != TokenType::comma) {
-        throw ParsingErr(kRBrackCommaArgsErrStr);
+        return LogError<UPExprAST>(kRBrackCommaArgsErrStr);
       }
 
       GetNextToken();
@@ -316,19 +323,22 @@ UPtrASTNode Parser::ParseIdentifierExpr() {
 
   // Eat the ')'.
   GetNextToken();
-  return make_node<CallExprAST>(std::move(id_name), std::move(args));
+  return make_expr<CallExprAST>(std::move(id_name), std::move(args));
 }
 
 /// parenexpr ::= '(' expression ')'
-UPtrASTNode Parser::ParseParenExpr() {
+UPExprAST Parser::ParseParenExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing paren expression\n";
 #endif
   GetNextToken(); // eat (.
   auto v = ParseExpression();
+  if (!v) {
+    return LogError<UPExprAST>(kCouldntParseDef);
+  }
 
   if (curr_tok_.type != TokenType::r_bracket) {
-    throw ParsingErr(kRBrackExpectedErrStr);
+    return LogError<UPExprAST>(kCouldntParseDef);
   }
 
   GetNextToken(); // eat ).
@@ -337,18 +347,21 @@ UPtrASTNode Parser::ParseParenExpr() {
 
 /// expression
 ///   ::= primary binoprhs
-UPtrASTNode Parser::ParseExpression() {
+UPExprAST Parser::ParseExpression() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing expression\n";
 #endif
   auto lhs = ParsePrimary();
+  if (!lhs) {
+    return LogError<UPExprAST>(kCouldntParseExpr);
+  }
 
   return ParseBinOpRHS(0, std::move(lhs));
 }
 
 /// binoprhs
 ///   ::= ('+' primary)*
-UPtrASTNode Parser::ParseBinOpRHS(int expr_prec, UPtrASTNode lhs) {
+UPExprAST Parser::ParseBinOpRHS(int expr_prec, UPExprAST lhs) {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing binoprhs\n";
 #endif
@@ -368,26 +381,32 @@ UPtrASTNode Parser::ParseBinOpRHS(int expr_prec, UPtrASTNode lhs) {
 
     // Parse the primary expression after the binary operator.
     auto rhs = ParsePrimary();
+    if (!rhs) {
+      return LogError<UPExprAST>(kCouldntParseBinOpExpr);
+    }
 
     // If BinOp binds less tightly with RHS than the operator after RHS, let
     // the pending operator take RHS as its LHS.
     int next_prec = GetCurrentTokenPrecedence();
     if (tok_prec < next_prec) {
       rhs = ParseBinOpRHS(tok_prec + 1, std::move(rhs));
+      if (!rhs) {
+        return LogError<UPExprAST>(kCouldntParseBinOpExpr);
+      }
     }
 
     // Merge lhs/rhs
-    lhs = make_node<BinExprAST>(bin_op, std::move(lhs),
+    lhs = make_expr<BinExprAST>(bin_op, std::move(lhs),
                                           std::move(rhs));
   } // go to top of while loop and parse other binary expressions
 }
 
 /// numberexpr ::= number
-UPtrASTNode Parser::ParseNumberExpr() {
+UPExprAST Parser::ParseNumberExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing nunmberexpr\n";
 #endif
-  auto result = make_node<NumLitExprAST>(GetTokenVal<double>(curr_tok_));
+  UPExprAST result = make_expr<NumLitExprAST>(GetTokenVal<double>(curr_tok_));
 
   GetNextToken(); // consume the number
 

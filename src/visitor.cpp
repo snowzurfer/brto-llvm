@@ -1,6 +1,7 @@
 #include <visitor.hpp>
+#include <driver.hpp>
 #include <ast.hpp>
-#include <llvm/IR/Type.h>
+#include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Constants.h>
@@ -19,103 +20,130 @@ const std::string kFuncRedefErrStr = "Function cannot be redefined";
 const std::string kUnknFuncRefedErrStr = "Unkown function referenced";
 const std::string kInvalidBinOpErrStr = "Invalid binary operator";
 const std::string kBodyReadingErrErrStr = "Error reading function body";
+const std::string kCouldntVisitFunctionASTErrStr =
+  "Couldn't produce IR for Func AST";
 const char kAddOp = '+';
 const char kSubOp = '-';
 const char kMulOp = '*';
 const char kLThanOp = '<';
 
-Visitor::Visitor(llvm::LLVMContext &context, llvm::IRBuilder<> &builder,
-                 llvm::Module &module,
-                 std::map<std::string, llvm::Value *> &named_vals)
-    : context_{context}, builder_{builder}, module_{module},
-      named_values_{named_vals} {}
-
 using llvm::Value;
 using llvm::Function;
+using NamedValsMap = std::map<std::string, Value *>;
+using FuncProtosMap = std::map<std::string, Value *>;
 
-Visitor::RT Visitor::operator()(const NumLitExprAST &arg) {
-  return llvm::ConstantFP::get(context_, llvm::APFloat(arg.val()));
+Function *GetFuncInCurrentModuleByName(std::shared_ptr<Compiler> c,
+                                       const std::string &fn) {
+  // Check if the function has already been added to the current module
+  if (auto f = c->module->getFunction(fn)) {
+    return f;
+  }
+
+  // Otherwise check if we can generate the declaration for an existing
+  // prototype
+  auto f_idx = c->func_protos.find(fn);
+  if (f_idx != c->func_protos.end()) {
+    // Generate the IR for the function prototype and return it
+    return std::visit(FuncVisitor{std::move(c)}, *f_idx->second.get());
+  }
+
+  return nullptr;
 }
 
-Visitor::RT Visitor::operator()(const VarExprAST &arg) {
+
+ExprVisitor::ExprVisitor(std::shared_ptr<Compiler> c)
+    : c_{std::move(c)} {};
+
+Value *ExprVisitor::operator()(std::nullptr_t &arg) {
+  return nullptr;
+}
+
+Value *ExprVisitor::operator()(NumLitExprAST &arg) {
+  return llvm::ConstantFP::get(c_->context, llvm::APFloat(arg.val()));
+}
+
+Value *ExprVisitor::operator()(VarExprAST &arg) {
   // Look this variable up in the function
-  Value *val = named_values_[arg.name()];
+  auto val = c_->named_values[arg.name()];
 
   if (!val) {
-    throw VisitingErr{kUnknVarNameErrStr};
+    return LogError<Value *>(kUnknVarNameErrStr);
   }
 
   return val;
 }
 
-//template <typename T>
-//class TD;
-
-Visitor::RT Visitor::operator()(const BinExprAST &arg) {
+Value *ExprVisitor::operator()(BinExprAST &arg) {
   using llvm::Type;
 
-  Visitor visitor{context_, builder_, module_, named_values_};
-
-  //std::visit([](auto &&arg){TD<decltype(arg)> argType;}, arg.lhs());
-  auto lhval = std::get<Value *>(std::visit(visitor, arg.lhs()));
-  auto rhval = std::get<Value *>(std::visit(visitor, arg.rhs()));
+  auto lhval = std::visit(*this, arg.lhs());
+  auto rhval = std::visit(*this, arg.rhs());
   assert(lhval && rhval);
 
   switch (arg.op()) {
     case kAddOp: {
-      return builder_.CreateFAdd(lhval, rhval, "addtmp");
+      return c_->builder.CreateFAdd(lhval, rhval, "addtmp");
     }
     case kSubOp: {
-      return builder_.CreateFSub(lhval, rhval, "subtmp");
+      return c_->builder.CreateFSub(lhval, rhval, "subtmp");
     }
     case kMulOp: {
-      return builder_.CreateFMul(lhval, rhval, "multmp");
+      return c_->builder.CreateFMul(lhval, rhval, "multmp");
     }
     case kLThanOp: {
-      lhval = builder_.CreateFCmpULT(lhval, rhval, "ltcmptmp");
+      lhval = c_->builder.CreateFCmpULT(lhval, rhval, "ltcmptmp");
       // Convert bool to double 0.0/1.0
-      return builder_.CreateUIToFP(lhval, Type::getDoubleTy(context_),
-                                   "booltmp");
+      return c_->builder.CreateUIToFP(lhval, Type::getDoubleTy(c_->context),
+                                      "booltmp");
     }
     default: {
-      throw VisitingErr{kInvalidBinOpErrStr};
+      return LogError<Value *>(kInvalidBinOpErrStr);
     }
   }
 }
 
-Visitor::RT Visitor::operator()(const CallExprAST &arg) {
-  // Look up the function name in the LLVM global function table
-  auto callee_func = module_.getFunction(arg.callee());
+Value *ExprVisitor::operator()(CallExprAST &arg) {
+  // Look up the function name in the current LLVM module function table
+  auto callee_func = GetFuncInCurrentModuleByName(c_, arg.callee());
   if (!callee_func) {
-    throw VisitingErr{kUnknFuncRefedErrStr};
+    return LogError<Value *>(kUnknFuncRefedErrStr);
   }
 
   // If the arguments mismatch
   if (callee_func->arg_size() != arg.args().size()) {
-    throw VisitingErr{kIncorrectNumArgsErrStr};
+    return LogError<Value *>(kIncorrectNumArgsErrStr);
   }
 
   std::vector<Value *> callee_args;
   callee_args.reserve(arg.args().size());
   for (auto &&arg : arg.args()) {
-    Visitor visitor{context_, builder_, module_, named_values_};
-    callee_args.push_back(std::get<Value *>(std::visit(visitor, *arg.get())));
-    assert(callee_args.back());
+    callee_args.push_back(std::visit(*this, *arg.get()));
+    if (!callee_args.back()) {
+      return LogError<Value *>(kIncorrectNumArgsErrStr);
+    }
   }
 
-  return builder_.CreateCall(callee_func, std::move(callee_args), "calltmp");
+  return c_->builder.CreateCall(callee_func, std::move(callee_args), "calltmp");
 }
 
-Visitor::RT Visitor::operator()(const ProtoAST &arg) {
+FuncVisitor::FuncVisitor(std::shared_ptr<Compiler> c)
+    : c_{std::move(c)} {};
+
+Function *FuncVisitor::operator()(std::nullptr_t &arg) {
+  return nullptr;
+}
+
+Function *FuncVisitor::operator()(ProtoAST &arg) {
   using llvm::Type;
   using llvm::FunctionType;
 
   // Make the function type: double(double, double) etc.
   std::vector<Type *> doubles{arg.args().size(),
-                              Type::getDoubleTy(context_)};
-  auto ft = FunctionType::get(Type::getDoubleTy(context_), doubles, false);
+                              Type::getDoubleTy(c_->context)};
+  auto ft = FunctionType::get(Type::getDoubleTy(c_->context),
+                              doubles, false);
   auto f = Function::Create(ft, Function::ExternalLinkage, arg.name(),
-                            &module_);
+                            c_->module.get());
 
   // Set names for all arguments
   size_t idx = 0;
@@ -126,49 +154,46 @@ Visitor::RT Visitor::operator()(const ProtoAST &arg) {
   return f;
 }
 
-Visitor::RT Visitor::operator()(const FuncAST &arg) {
+Function *FuncVisitor::operator()(FuncAST &arg) {
   using llvm::Function;
   using llvm::BasicBlock;
 
-  // Check for existing function declaration from using 'extern'
-  auto f = module_.getFunction(std::get<ProtoAST>(arg.proto()).name());
+  // Transfer ownership of the prototype to the prototypes map but also keep a
+  // reference to it so that it can be used below
+  auto &p = std::get<ProtoAST>(arg.proto());
+  c_->func_protos[p.name()] = std::move(arg.GetProtoNode());
 
+  auto f = GetFuncInCurrentModuleByName(c_, p.name());
   if (!f) {
-    Visitor visitor{context_, builder_, module_, named_values_};
-    f = std::get<Function *>(std::visit(visitor, arg.proto()));
-  }
-  assert(f);
-
-  if (!f->empty()) {
-    throw VisitingErr(kFuncRedefErrStr);
+    return LogError<Function *>(kCouldntVisitFunctionASTErrStr);
   }
 
   // Create a new basic block to start insertion into
-  auto bb = BasicBlock::Create(context_, "entry", f);
-  builder_.SetInsertPoint(bb);
+  auto bb = BasicBlock::Create(c_->context, "entry", f);
+  c_->builder.SetInsertPoint(bb);
 
   // Record function arguments in the map
-  named_values_.clear();
+  c_->named_values.clear();
   for (auto &arg : f->args()) {
-    named_values_[arg.getName()] = &arg;
+    c_->named_values[arg.getName()] = &arg;
   }
 
-  {
-    Visitor visitor{context_, builder_, module_, named_values_};
-    if (auto ret_val = std::get<Value *>(std::visit(visitor, arg.body()))) {
-      // Finish off function
-      builder_.CreateRet(ret_val);
+  if (auto ret_val = std::visit(ExprVisitor{c_}, arg.body())) {
+    // Finish off function
+    c_->builder.CreateRet(ret_val);
 
-      // Validate the generated code
-      llvm::verifyFunction(*f);
+    // Validate the generated code
+    llvm::verifyFunction(*f);
 
-      return f;
-    }
+    // Run the optimizer on the function
+    c_->fpm->run(*f);
+
+    return f;
   }
 
   // Handle error generating body
   f->eraseFromParent();
-  throw VisitingErr(kBodyReadingErrErrStr);
+  return LogError<Function *>(kCouldntVisitFunctionASTErrStr);
 }
 
 } // namespace brt

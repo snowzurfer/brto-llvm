@@ -30,30 +30,27 @@
 #include <iostream>
 #include <variant>
 #include <utility>
+#include <iostream>
+#include <ast_types.hpp>
 
 namespace brt {
-
-// Forward declarations
-class NumLitExprAST;
-class VarExprAST;
-class BinExprAST;
-class CallExprAST;
-class ProtoAST;
-class FuncAST;
-
-/// Type used to represent all the expression production rules
-using ASTNode = std::variant<NumLitExprAST, VarExprAST, BinExprAST, CallExprAST,
-                             ProtoAST, FuncAST>;
 
 /// Emplace an instance of type T into a std::variant of type ASTNode
 template <class T, typename... Args>
 auto make_node(Args&&... args) {
   return std::make_unique<ASTNode>(T{std::forward<Args>(args)...});
 }
-/// Use type aliasing to improve code syntax
-using UPtrASTNode = std::unique_ptr<ASTNode>;
-using UPtrASTNodeVec = std::vector<UPtrASTNode>;
-using StrVec = std::vector<std::string>;
+
+/// Emplace an instance of type T into a std::variant of type ExprAST
+template <class T, typename... Args>
+    //std::enable_if<
+      //(std::is_same_v<NumLitExprAST, T> ||
+       //std::is_same_v<VarExprAST, T> ||
+       //std::is_same_v<BinExprAST, T> ||
+       //std::is_same_v<CallExprAST, T>)>>
+auto make_expr(Args&&... args) {
+  return std::make_unique<ExprAST>(T{std::forward<Args>(args)...});
+}
 
 /// Expression for numeric literals
 class NumLitExprAST {
@@ -69,6 +66,7 @@ class NumLitExprAST {
   ~NumLitExprAST() = default;
 
   const auto &val() const { return val_; }
+  auto &val() { return val_; }
 
 private:
   double val_;
@@ -89,6 +87,7 @@ class VarExprAST {
   ~VarExprAST() = default;
 
   const auto &name() const { return name_; }
+  auto &name() { return name_; }
 
 private:
   std::string name_;
@@ -98,7 +97,7 @@ private:
 /// Expression class for binary expressions
 class BinExprAST {
 public:
-  BinExprAST(char op, UPtrASTNode lhs, UPtrASTNode rhs)
+  BinExprAST(char op, UPExprAST lhs, UPExprAST rhs)
       : lhs_{std::move(lhs)}, rhs_{std::move(rhs)}, op_(op) {}
   BinExprAST() = delete;
 
@@ -109,11 +108,14 @@ public:
   ~BinExprAST() = default;
 
   const auto &lhs() const { return *lhs_.get(); }
+  auto &lhs() { return *lhs_.get(); }
   const auto &rhs() const { return *rhs_.get(); }
+  auto &rhs() { return *rhs_.get(); }
   char op() const { return op_; }
+  char op() { return op_; }
 
 private:
-  UPtrASTNode lhs_, rhs_;
+  UPExprAST lhs_, rhs_;
   char op_;
 
 }; // class BinExprAST
@@ -121,7 +123,7 @@ private:
 /// Expression class for function calls
 class CallExprAST {
 public:
-  CallExprAST(std::string callee, UPtrASTNodeVec args)
+  CallExprAST(std::string callee, UPExprASTVec args)
       : callee_{std::move(callee)}, args_{std::move(args)} {}
   CallExprAST() = delete;
 
@@ -133,11 +135,13 @@ public:
   ~CallExprAST() = default;
 
   const auto &callee() const { return callee_; }
+  auto &callee() { return callee_; }
   const auto &args() const { return args_; }
+  auto &args() { return args_; }
 
 private:
   std::string callee_;
-  UPtrASTNodeVec args_;
+  UPExprASTVec args_;
 
 }; // class CallExprAst
 
@@ -146,10 +150,18 @@ class ProtoAST {
 public:
   ProtoAST(std::string name, StrVec args)
       : name_{std::move(name)}, args_{std::move(args)} {}
+
   ProtoAST() = delete;
+  ProtoAST &operator=(const ProtoAST &) = delete;
+  ProtoAST(const ProtoAST &) = delete;
+  ProtoAST(ProtoAST &&) = default;
+  ProtoAST &operator=(ProtoAST &&) = default;
+  ~ProtoAST() = default;
 
   const auto &name() const { return name_; }
+  auto &name() { return name_; }
   const auto &args() const { return args_; }
+  auto &args() { return args_; }
 
 private:
   std::string name_;
@@ -160,27 +172,36 @@ private:
 /// Class representing a function definition
 class FuncAST {
 public:
-  FuncAST(UPtrASTNode proto, UPtrASTNode body)
+  FuncAST(UPASTNode proto, UPExprAST body)
       : proto_{std::move(proto)}, body_{std::move(body)} {}
 
+  FuncAST() = delete;
+  FuncAST &operator=(const FuncAST &) = delete;
+  FuncAST(const FuncAST &) = delete;
+  FuncAST(FuncAST &&) = default;
+  FuncAST &operator=(FuncAST &&) = default;
+  ~FuncAST() = default;
+
   const auto &proto() const { return *proto_.get(); }
+  auto &proto() { return *proto_.get(); }
   const auto &body() const { return *body_.get(); }
+  auto &body() { return *body_.get(); }
+  auto &GetProtoNode() { return proto_; }
 
 private:
-  UPtrASTNode proto_, body_;
+  UPASTNode proto_;
+  UPExprAST body_;
 
 }; // class FuncAST
 
-/// LogError* - These are little helper functions for error handling.
-/// TODO Use throw/catch instead
-//UPExprAST LogError(const std::string &str) {
-  //std::cerr << "Error: " << str << "\n";
-  //return nullptr;
-//}
-//ProtoAST::TUPtr LogErrorP(const std::string &str) {
-  //std::cerr << "Error: " << str << "\n";
-  //return nullptr;
-//}
+// LogError* - These are little helper functions for error handling.
+// It's not recommended to use exceptions when working with LLVM
+template <typename T>
+T LogError(const std::string &str) {
+  std::cerr << kErrMsgPrefix << str << "\n";
+  return nullptr;
+}
+
 
 } // namespace brt
 

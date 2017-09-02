@@ -20,9 +20,6 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 // TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
 // OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
-// TODO: Possibly move all this stuff in implementation files and only expose
-//       generic program usage interface
 
 #ifndef BRTO_PARSER_HPP
 #define BRTO_PARSER_HPP
@@ -31,9 +28,9 @@
 #include <istream>
 #include <string>
 #include <map>
-#include <ast.hpp>
 #include <variant>
 #include <utility>
+#include <ast_types.hpp>
 
 namespace brt {
 
@@ -87,7 +84,7 @@ class Lexer {
   const Token &GetCurrToken();
   int GetCurrentTokenPrecedence() const;
 
-  using TSPtr = std::shared_ptr<Lexer>;
+  using SP = std::shared_ptr<Lexer>;
 
  private:
   Token GetNextTokenInternal();
@@ -100,7 +97,7 @@ class Lexer {
 
 class Parser {
  public:
-  Parser(const Lexer::TSPtr &lexer);
+  Parser(Lexer::SP lexer);
 
   // rule of 7
   Parser() = delete;
@@ -110,36 +107,27 @@ class Parser {
   Parser &operator()(Parser &&) = delete;
   ~Parser() = default;
 
-  /// Parse one production or return nullptr if the production was not valid
-  UPtrASTNode Parse();
+  UPASTNode ParseTopLevelExpr();
+  UPASTNode ParseExtern();
+  UPASTNode ParseDefinition();
 
  private:
-  Lexer::TSPtr lexer_;
+  Lexer::SP lexer_;
   // TODO Change how the map is acquired
   std::map<char, int> binop_precedence_;
   Token curr_tok_;
 
   void GetNextToken();
   int GetCurrentTokenPrecedence() const;
-  UPtrASTNode ParseTopLevelExpr();
-  UPtrASTNode ParseExtern();
-  UPtrASTNode ParseDefinition();
-  UPtrASTNode ParsePrototype();
-  UPtrASTNode ParsePrimary();
-  UPtrASTNode ParseIdentifierExpr();
-  UPtrASTNode ParseParenExpr();
-  UPtrASTNode ParseExpression();
-  UPtrASTNode ParseBinOpRHS(int expr_prec, UPtrASTNode lhs);
-  UPtrASTNode ParseNumberExpr();
+  UPASTNode ParsePrototype();
+  UPExprAST ParsePrimary();
+  UPExprAST ParseIdentifierExpr();
+  UPExprAST ParseParenExpr();
+  UPExprAST ParseExpression();
+  UPExprAST ParseBinOpRHS(int expr_prec, UPExprAST lhs);
+  UPExprAST ParseNumberExpr();
 
 }; // class Parser
-
-// Exception classes
-class ParsingErr : public std::runtime_error {
- public:
-  explicit ParsingErr(const std::string &what_arg)
-      : runtime_error(what_arg) {}
-}; // class ParsingErr
 
 } // namespace brt
 

@@ -29,6 +29,10 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
+#include <KaleidoscopeJIT.h>
+#include <variant>
+#include <iostream>
+#include <visitor.hpp>
 
 // Forward declarations
 namespace brt {
@@ -39,6 +43,22 @@ class Parser;
 } // namespace brt
 
 namespace brt {
+
+struct Compiler {
+  Compiler();
+
+  llvm::LLVMContext context;
+  llvm::IRBuilder<> builder;
+  std::unique_ptr<llvm::Module> module;
+  std::map<std::string, llvm::Value *> named_values;
+  std::unique_ptr<llvm::orc::KaleidoscopeJIT> kl_jit;
+  std::unique_ptr<llvm::legacy::FunctionPassManager> fpm;
+  std::map<std::string, UPASTNode> func_protos;
+
+  void InitialiseModuleAndPassManager();
+  // Return nullptr if it didn't succeed
+  llvm::Function *GetFuncInCurrentModuleByName(const std::string &fn);
+};
 
 class Driver {
  public:
@@ -57,12 +77,11 @@ class Driver {
   RC Run();
 
  private:
-  std::shared_ptr<Lexer> lexer_;
-  std::unique_ptr<Parser> parser_;
-  std::unique_ptr<llvm::LLVMContext> context_;
-  std::unique_ptr<llvm::IRBuilder<>> builder_;
-  std::unique_ptr<llvm::Module> module_;
-  std::map<std::string, llvm::Value *> named_values_;
+  std::shared_ptr<Lexer> l_;
+  std::unique_ptr<Parser> p_;
+  std::shared_ptr<Compiler> c_;
+
+  void ExecTopLvlModule();
 
 }; // class Driver
 
