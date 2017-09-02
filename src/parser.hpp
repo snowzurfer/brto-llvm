@@ -20,9 +20,6 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 // TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
 // OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
-// TODO: Possibly move all this stuff in implementation files and only expose
-//       generic program usage interface
 
 #ifndef BRTO_PARSER_HPP
 #define BRTO_PARSER_HPP
@@ -31,14 +28,9 @@
 #include <istream>
 #include <string>
 #include <map>
-
-// Forward declarations
-namespace brt {
-class ASTBase;
-class ExprAST;
-class PrototypeAST;
-class FunctionAST;
-} // namespace brt
+#include <variant>
+#include <utility>
+#include <ast_types.hpp>
 
 namespace brt {
 
@@ -65,11 +57,16 @@ enum class TokenType {
 
 struct Token {
   TokenType type;
-  double val;
-  std::string identifier;
-
-  char GetLastChar() const;
+  std::variant<double, std::string, char> val;
 }; // class Token
+
+/// Utility function template to retrieve a token value given its type
+template <typename T>
+const T &GetTokenVal(const Token &tok) {
+  return std::get<T>(tok.val);
+}
+/// TODO Do away with TokenType and use visitor to retrieve the value of the
+///      token depending on its type
 
 class Lexer {
  public:
@@ -83,20 +80,26 @@ class Lexer {
   Lexer &operator()(Lexer &&) = delete;
   ~Lexer() = default;
 
-  Token GetNextToken();
+  const Token &GetNextToken();
+  const Token &GetCurrToken();
   int GetCurrentTokenPrecedence() const;
 
+  using SP = std::shared_ptr<Lexer>;
+
  private:
+  Token GetNextTokenInternal();
+
   std::istream istream_;
   char last_char_;
+  Token curr_tok_;
 
 }; // class Lexer
 
 class Parser {
  public:
-  Parser(std::istream &istream);
+  Parser(Lexer::SP lexer);
 
-  // Rule of 7
+  // rule of 7
   Parser() = delete;
   Parser(const Parser &) = delete;
   Parser &operator()(const Parser &) = delete;
@@ -104,40 +107,27 @@ class Parser {
   Parser &operator()(Parser &&) = delete;
   ~Parser() = default;
 
-  enum class RC {
-    not_eof,
-    eof,
-  }; // enum class RC
-
-  /// Parse one production or return nullptr if the production was not valid
-  RC Parse();
+  UPASTNode ParseTopLevelExpr();
+  UPASTNode ParseExtern();
+  UPASTNode ParseDefinition();
 
  private:
-  Lexer lexer_;
-  Token curr_tok_;
+  Lexer::SP lexer_;
   // TODO Change how the map is acquired
   std::map<char, int> binop_precedence_;
+  Token curr_tok_;
 
   void GetNextToken();
   int GetCurrentTokenPrecedence() const;
-  void HandleExtern();
-  void HandleDefinition();
-  void HandleTopLevelExpression();
-  std::unique_ptr<FunctionAST> ParseTopLevelExpr();
-  std::unique_ptr<PrototypeAST> ParseExtern();
-  std::unique_ptr<FunctionAST> ParseDefinition();
-  std::unique_ptr<PrototypeAST> ParsePrototype();
-  std::unique_ptr<ExprAST> ParsePrimary();
-  std::unique_ptr<ExprAST> ParseIdentifierExpr();
-  std::unique_ptr<ExprAST> ParseParenExpr();
-  std::unique_ptr<ExprAST> ParseExpression();
-  std::unique_ptr<ExprAST> ParseBinOpRHS(int expr_prec,
-                                         std::unique_ptr<ExprAST> lhs);
-  std::unique_ptr<ExprAST> ParseNumberExpr();
+  UPASTNode ParsePrototype();
+  UPExprAST ParsePrimary();
+  UPExprAST ParseIdentifierExpr();
+  UPExprAST ParseParenExpr();
+  UPExprAST ParseExpression();
+  UPExprAST ParseBinOpRHS(int expr_prec, UPExprAST lhs);
+  UPExprAST ParseNumberExpr();
 
 }; // class Parser
-
-using PRC = brt::Parser::RC;
 
 } // namespace brt
 

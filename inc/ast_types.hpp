@@ -21,23 +21,38 @@
 // TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
 // OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#include <iostream>
-#include <memory>
+#ifndef BRTO_AST_TYPES_HPP
+#define BRTO_AST_TYPES_HPP
+
+#include <variant>
 #include <utility>
-#include <parser.hpp>
-#include <driver.hpp>
+#include <vector>
+#include <string>
+#include <memory>
 
-void MainLoop(brt::Driver &driver) {
-  std::cerr << "> ";
-  while (driver.Run() != DrRC::eof) {
-    std::cerr << "> ";
-  }
-}
+namespace brt {
 
-int main(int argc, char *argv[]) {
-  brt::Driver driver{std::cin};
+const std::string kErrMsgPrefix = "## ERR: ";
 
-  // Run the main "interpreter loop"
-  MainLoop(driver);
-  return 0;
-}
+// Forward declarations
+class NumLitExprAST;
+class VarExprAST;
+class BinExprAST;
+class CallExprAST;
+class ProtoAST;
+class FuncAST;
+
+/// Type used to represent all the expression production rules
+using ExprAST = std::variant<std::nullptr_t, NumLitExprAST, VarExprAST,
+                             BinExprAST, CallExprAST>;
+using ASTNode = std::variant<std::nullptr_t, ProtoAST, FuncAST>;
+
+/// Use type aliasing to improve code syntax
+using UPASTNode = std::unique_ptr<ASTNode>;
+using UPExprAST = std::unique_ptr<ExprAST>;
+using UPExprASTVec = std::vector<UPExprAST>;
+using StrVec = std::vector<std::string>;
+
+} // namespace brt
+
+#endif

@@ -21,23 +21,57 @@
 // TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
 // OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#include <iostream>
+#ifndef BRT_VISITOR_HPP
+#define BRT_VISITOR_HPP
+
+#include <string>
+#include <map>
+#include <variant>
 #include <memory>
-#include <utility>
-#include <parser.hpp>
-#include <driver.hpp>
+#include <ast_types.hpp>
+#include <llvm/IR/Type.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LLVMContext.h>
 
-void MainLoop(brt::Driver &driver) {
-  std::cerr << "> ";
-  while (driver.Run() != DrRC::eof) {
-    std::cerr << "> ";
-  }
-}
+// Forward declarations
+namespace brt {
 
-int main(int argc, char *argv[]) {
-  brt::Driver driver{std::cin};
+struct Compiler;
 
-  // Run the main "interpreter loop"
-  MainLoop(driver);
-  return 0;
-}
+} // namespace brt
+
+namespace brt {
+
+/// Visitor which consumes expression nodes
+class ExprVisitor {
+ public:
+  ExprVisitor(std::shared_ptr<Compiler> compiler);
+
+  llvm::Value *operator()(std::nullptr_t &arg);
+  llvm::Value *operator()(NumLitExprAST &arg);
+  llvm::Value *operator()(VarExprAST &arg);
+  llvm::Value *operator()(BinExprAST &arg);
+  llvm::Value *operator()(CallExprAST &arg);
+
+ private:
+  std::shared_ptr<Compiler> c_;
+
+}; // class ExprVisitor
+
+/// Visitor which consumes function nodes
+class FuncVisitor {
+ public:
+  FuncVisitor(std::shared_ptr<Compiler> compiler);
+
+  llvm::Function *operator()(std::nullptr_t &arg);
+  llvm::Function *operator()(ProtoAST &arg);
+  llvm::Function *operator()(FuncAST &arg);
+
+ private:
+  std::shared_ptr<Compiler> c_;
+
+}; // class FuncVisitor
+
+} // namespace brt
+
+#endif

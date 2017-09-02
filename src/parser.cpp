@@ -1,4 +1,3 @@
-// MIT License
 //
 // Simple compiler front-end for LLVM written as a learning exercise.
 // Copyright © 2017 Alberto Taiuti
@@ -22,7 +21,6 @@
 // OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include <parser.hpp>
-#include <ast.hpp>
 #include <istream>
 #include <string>
 #include <memory>
@@ -30,8 +28,10 @@
 #include <array>
 #include <vector>
 #include <sstream>
-#include <cctype>
 #include <cassert>
+#include <iostream>
+#include <ast.hpp>
+
 
 namespace brt {
 
@@ -41,19 +41,11 @@ const std::string kCommandTokenDef = "def";
 const std::string kCommandTokenExt = "extern";
 const char kCommentToken = '#';
 
-char Token::GetLastChar() const {
-  assert(identifier.size() == 1);
-  return *identifier.begin();
-}
-
 Lexer::Lexer(std::istream &istream)
     : istream_{istream.rdbuf()}, last_char_{' '} {}
 
 /// Retrieve a token from the stream and return it
-Token Lexer::GetNextToken() {
-  std::string identifier_str;
-  double num_val = -1.0;
-
+Token Lexer::GetNextTokenInternal() {
   // Skip any whitespace
   while (std::isspace(last_char_)) {
     istream_.get(last_char_);
@@ -61,7 +53,7 @@ Token Lexer::GetNextToken() {
 
   // Idenfitier:: [a-zA-Z][a-zA-Z0-9]
   if (std::isalpha(last_char_)) {
-    identifier_str = last_char_;
+    std::string identifier_str{last_char_};
 
     istream_.get(last_char_);
     while (std::isalnum(last_char_)) {
@@ -70,17 +62,18 @@ Token Lexer::GetNextToken() {
     }
 
     if (identifier_str == kCommandTokenDef) {
-      return {TokenType::def, num_val, identifier_str};
+      return {TokenType::def, std::move(identifier_str)};
     }
     if (identifier_str == kCommandTokenExt) {
-      return {TokenType::ext, num_val, identifier_str};
+      return {TokenType::ext, std::move(identifier_str)};
     }
-    return {TokenType::identifier, num_val, identifier_str};
+    return {TokenType::identifier, std::move(identifier_str)};
   }
 
   // Numbers [0-9.]+
   if (std::isdigit(last_char_) || last_char_ == '.') {
     std::string num_str;
+    double num_val = -1.0;
     do {
       num_str += last_char_;
       istream_.get(last_char_);
@@ -88,7 +81,7 @@ Token Lexer::GetNextToken() {
 
     std::istringstream isstrm (num_str);
     isstrm >> num_val;
-    return {TokenType::number, num_val, identifier_str};
+    return {TokenType::number, num_val};
   }
 
   // Comments
@@ -104,77 +97,78 @@ Token Lexer::GetNextToken() {
 
   // Check for end of file
   if (last_char_ == EOF) {
-    identifier_str = "EOF";
-    return {TokenType::eof, num_val, identifier_str};
+    return {TokenType::eof, static_cast<char>(EOF)};
   }
 
   // Save the last character and then advance before checking what char it was
   assert(isascii(last_char_));
-  identifier_str = last_char_;
   char this_char = last_char_;
   std::cin.get(last_char_);
 
   if (this_char == ';') {
-    return {TokenType::semicolon, num_val, identifier_str};
+    return {TokenType::semicolon, this_char};
   }
   if (this_char == '(') {
-    return {TokenType::l_bracket, num_val, identifier_str};
+    return {TokenType::l_bracket, this_char};
   }
   if (this_char == ')') {
-    return {TokenType::r_bracket, num_val, identifier_str};
+    return {TokenType::r_bracket, this_char};
   }
   if (this_char == ',') {
-    return {TokenType::comma, num_val, identifier_str};
+    return {TokenType::comma, this_char};
   }
 
   // If all other tests fail, set as its ascii value
-  return {TokenType::generic_ascii, num_val, identifier_str};
+  return {TokenType::generic_ascii, this_char};
+}
+
+const Token &Lexer::GetNextToken() {
+  curr_tok_ = GetNextTokenInternal();
+
+  return curr_tok_;
+}
+
+const Token &Lexer::GetCurrToken() {
+  return curr_tok_;
 }
 
 //------------------------ Parser ----------------------------------
 
-Parser::Parser(std::istream &istream) : lexer_{istream} {
+const std::string kAnonExprName = "__anon_expr";
+const std::string kExpectedNameFuncInProtErrStr =
+  "Expected function name in prototype";
+const std::string kLBrackProtoErrStr = "Expected '(' in prototype";
+const std::string kRBrackProtoErrStr = "Expected ')' in prototype";
+const std::string kUnknTokExpectingExprErrStr =
+  "unknown token when expecting an expression";
+const std::string kRBrackCommaArgsErrStr =
+  "Expected ')' or ',' in argument list";
+const std::string kRBrackExpectedErrStr = "expected ')'";
+const std::string kCouldntParseTopLvlExpr = "Could not parse Top Lvl Expr";
+const std::string kCouldntParseDef = "Could not parse Def";
+const std::string kCouldntParseIdentExpr = "Couldn't parse Identifier Expr";
+const std::string kCouldntParseParenExpr = "Couldn't parse Paren Expr";
+const std::string kCouldntParseExpr = "Couldn't parse Expr";
+const std::string kCouldntParseBinOpExpr = "Couldn't parse Binop Expr";
+
+Parser::Parser(Lexer::SP lexer) : lexer_{std::move(lexer)} {
   binop_precedence_['<'] = 10;
   binop_precedence_['+'] = 20;
   binop_precedence_['-'] = 20;
   binop_precedence_['*'] = 40; // highest.
 }
 
-/// top ::= definition | external | expression | ';'
-Parser::RC Parser::Parse() {
-  // Prime the lexer
-  GetNextToken();
-
-  switch (curr_tok_.type) {
-    case TokenType::eof:
-      return RC::eof;
-    case TokenType::semicolon: // ignore top-level semicolons.
-      // Consume
-      GetNextToken();
-    case TokenType::def:
-      HandleDefinition();
-      break;
-    case TokenType::ext:
-      HandleExtern();
-      break;
-    default:
-      HandleTopLevelExpression();
-      break;
-  }
-
-  return RC::not_eof;
-}
-
 void Parser::GetNextToken() {
-  curr_tok_ = lexer_.GetNextToken();
+  curr_tok_ = lexer_->GetNextToken();
 }
 
 /// Get the precedence of the pending binary operator token.
 int Parser::GetCurrentTokenPrecedence() const {
-  char last_char = curr_tok_.GetLastChar();
   if (curr_tok_.type != TokenType::generic_ascii) {
     return -1;
   }
+
+  char last_char = GetTokenVal<char>(curr_tok_);
 
   // Make sure it's a declared binop.
   int tok_prec = binop_precedence_.at(last_char);
@@ -185,49 +179,23 @@ int Parser::GetCurrentTokenPrecedence() const {
   return tok_prec;
 }
 
-void Parser::HandleExtern() {
-  if (ParseExtern()) {
-    std::cerr << "Parsed an extern\n";
-  } /*else {*/
-    //// Skip token for error recovery.
-    // TODO Consume until newline
-    //GetNextToken();
-  /*}*/
-}
-
-void Parser::HandleDefinition() {
-  if (ParseDefinition()) {
-    std::cerr << "Parsed a function definition\n";
-  }
-  // TODO Consume until newline
-}
-
-void Parser::HandleTopLevelExpression() {
-  // Evaluate a top-level expression into an anonymous function.
-  if (ParseTopLevelExpr()) {
-    std::cerr << "Parsed a top-level expr\n";
-  } /*else {*/
-    //// Skip token for error recovery.
-    // TODO Consume until newline
-    //GetNextToken();
-  /*}*/
-}
-
 /// toplevelexpr ::= expression
-std::unique_ptr<FunctionAST> Parser::ParseTopLevelExpr() {
+UPASTNode Parser::ParseTopLevelExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing toplevel\n";
 #endif
-  if (auto e = ParseExpression()) {
+  if (auto e = ParseExpression()) {;
     // Make an anonymous proto.
-    auto proto = std::make_unique<PrototypeAST>("", std::vector<std::string>());
-    return std::make_unique<FunctionAST>(std::move(proto), std::move(e));
+    auto proto = make_node<ProtoAST>(kAnonExprName, std::vector<std::string>());
+    // Then return it into a function
+    return make_node<FuncAST>(std::move(proto), std::move(e));
   }
-  return nullptr;
+
+  return LogError<UPASTNode>(kCouldntParseTopLvlExpr);
 }
 
 /// external ::= 'extern' prototype
-std::unique_ptr<PrototypeAST> Parser::ParseExtern() {
+UPASTNode Parser::ParseExtern() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing extern\n";
 #endif
@@ -236,65 +204,68 @@ std::unique_ptr<PrototypeAST> Parser::ParseExtern() {
 }
 
 /// definition ::= 'def' prototype expression
-std::unique_ptr<FunctionAST> Parser::ParseDefinition() {
+UPASTNode Parser::ParseDefinition() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing definition\n";
 #endif
   GetNextToken();  // eat def.
   auto proto = ParsePrototype();
   if (!proto) {
-    return nullptr;
+    return LogError<UPASTNode>(kCouldntParseDef);
   }
 
-  if (auto e = ParseExpression()) {
-    return std::make_unique<FunctionAST>(std::move(proto), std::move(e));
+  auto e = ParseExpression();
+  if (!e) {
+    return LogError<UPASTNode>(kCouldntParseDef);
   }
 
-  return nullptr;
+  return make_node<FuncAST>(std::move(proto), std::move(e));
 }
 
 /// prototype
 ///   ::= id '(' id* ')'
-std::unique_ptr<PrototypeAST> Parser::ParsePrototype() {
+UPASTNode Parser::ParsePrototype() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing prototype\n";
 #endif
   if (curr_tok_.type != TokenType::identifier) {
-    return LogErrorP("Expected function name in prototype");
+    return LogError<UPASTNode>(kExpectedNameFuncInProtErrStr);
   }
 
-  std::string fn_name = curr_tok_.identifier;
+  std::string fn_name = GetTokenVal<std::string>(curr_tok_);
   GetNextToken();
 
   if (curr_tok_.type  != TokenType::l_bracket) {
-    return LogErrorP("Expected '(' in prototype");
+    return LogError<UPASTNode>(kLBrackProtoErrStr);
   }
 
   // Read the list of argument names.
   std::vector<std::string> arg_names;
   GetNextToken();
   while (curr_tok_.type == TokenType::identifier) {
-    arg_names.push_back(curr_tok_.identifier);
+    arg_names.push_back(GetTokenVal<std::string>(curr_tok_));
     GetNextToken();
   }
   if (curr_tok_.type  != TokenType::r_bracket) {
-    return LogErrorP("Expected ')' in prototype");
+    return LogError<UPASTNode>(kRBrackProtoErrStr);
   }
 
   // success.
   GetNextToken();  // eat ')'.
 
-  return std::make_unique<PrototypeAST>(fn_name, std::move(arg_names));
+  return make_node<ProtoAST>(std::move(fn_name), std::move(arg_names));
 }
 
 /// primary
 ///   ::= identifierexpr
 ///   ::= numberexpr
 ///   ::= parenexpr
-std::unique_ptr<ExprAST> Parser::ParsePrimary() {
+UPExprAST Parser::ParsePrimary() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing primary\n";
 #endif
+  curr_tok_ = lexer_->GetCurrToken();
+
   switch (curr_tok_.type) {
     case TokenType::identifier: {
         return ParseIdentifierExpr();
@@ -306,7 +277,7 @@ std::unique_ptr<ExprAST> Parser::ParsePrimary() {
       return ParseParenExpr();
     }
     default: {
-      return LogError("unknown token when expecting an expression");
+      return LogError<UPExprAST>(kUnknTokExpectingExprErrStr);
     }
   }
 }
@@ -314,28 +285,28 @@ std::unique_ptr<ExprAST> Parser::ParsePrimary() {
 /// identifierexpr
 ///   ::= identifier
 ///   ::= identifier '(' expression* ')'
-std::unique_ptr<ExprAST> Parser::ParseIdentifierExpr() {
+UPExprAST Parser::ParseIdentifierExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing identifier expression\n";
 #endif
-  std::string id_name = curr_tok_.identifier;
+  std::string id_name = GetTokenVal<std::string>(curr_tok_);
 
   GetNextToken();  // eat identifier.
 
   if (curr_tok_.type != TokenType::l_bracket) { // Simple variable ref.
-    return std::make_unique<VariableExprAST>(std::move(id_name));
+    return make_expr<VarExprAST>(std::move(id_name));
   }
 
   // Call.
   GetNextToken();  // eat (
-  std::vector<std::unique_ptr<ExprAST>> args;
+  UPExprASTVec args;
   if (curr_tok_.type != TokenType::r_bracket) {
     while (1) {
       if (auto arg = ParseExpression()) {
         args.push_back(std::move(arg));
       }
       else {
-        return nullptr;
+        return LogError<UPExprAST>(kCouldntParseIdentExpr);
       }
 
       if (curr_tok_.type == TokenType::r_bracket) {
@@ -343,7 +314,7 @@ std::unique_ptr<ExprAST> Parser::ParseIdentifierExpr() {
       }
 
       if (curr_tok_.type != TokenType::comma) {
-        return LogError("Expected ')' or ',' in argument list");
+        return LogError<UPExprAST>(kRBrackCommaArgsErrStr);
       }
 
       GetNextToken();
@@ -352,23 +323,22 @@ std::unique_ptr<ExprAST> Parser::ParseIdentifierExpr() {
 
   // Eat the ')'.
   GetNextToken();
-
-  return std::make_unique<CallExprAST>(std::move(id_name), std::move(args));
+  return make_expr<CallExprAST>(std::move(id_name), std::move(args));
 }
 
 /// parenexpr ::= '(' expression ')'
-std::unique_ptr<ExprAST> Parser::ParseParenExpr() {
+UPExprAST Parser::ParseParenExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing paren expression\n";
 #endif
   GetNextToken(); // eat (.
   auto v = ParseExpression();
   if (!v) {
-    return nullptr;
+    return LogError<UPExprAST>(kCouldntParseDef);
   }
 
   if (curr_tok_.type != TokenType::r_bracket) {
-    return LogError("expected ')'");
+    return LogError<UPExprAST>(kCouldntParseDef);
   }
 
   GetNextToken(); // eat ).
@@ -377,13 +347,13 @@ std::unique_ptr<ExprAST> Parser::ParseParenExpr() {
 
 /// expression
 ///   ::= primary binoprhs
-std::unique_ptr<ExprAST> Parser::ParseExpression() {
+UPExprAST Parser::ParseExpression() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing expression\n";
 #endif
   auto lhs = ParsePrimary();
   if (!lhs) {
-    return nullptr;
+    return LogError<UPExprAST>(kCouldntParseExpr);
   }
 
   return ParseBinOpRHS(0, std::move(lhs));
@@ -391,8 +361,7 @@ std::unique_ptr<ExprAST> Parser::ParseExpression() {
 
 /// binoprhs
 ///   ::= ('+' primary)*
-std::unique_ptr<ExprAST> Parser::ParseBinOpRHS(int expr_prec,
-                                              std::unique_ptr<ExprAST> lhs) {
+UPExprAST Parser::ParseBinOpRHS(int expr_prec, UPExprAST lhs) {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing binoprhs\n";
 #endif
@@ -407,13 +376,13 @@ std::unique_ptr<ExprAST> Parser::ParseBinOpRHS(int expr_prec,
     }
 
     // Okay, we know this is a binop.
-    auto bin_op = curr_tok_.GetLastChar();
+    auto bin_op = GetTokenVal<char>(curr_tok_);
     GetNextToken();  // eat binop
 
     // Parse the primary expression after the binary operator.
     auto rhs = ParsePrimary();
     if (!rhs) {
-      return nullptr;
+      return LogError<UPExprAST>(kCouldntParseBinOpExpr);
     }
 
     // If BinOp binds less tightly with RHS than the operator after RHS, let
@@ -421,21 +390,26 @@ std::unique_ptr<ExprAST> Parser::ParseBinOpRHS(int expr_prec,
     int next_prec = GetCurrentTokenPrecedence();
     if (tok_prec < next_prec) {
       rhs = ParseBinOpRHS(tok_prec + 1, std::move(rhs));
+      if (!rhs) {
+        return LogError<UPExprAST>(kCouldntParseBinOpExpr);
+      }
     }
 
     // Merge lhs/rhs
-    lhs = std::make_unique<BinaryExprAST>(bin_op, std::move(lhs),
+    lhs = make_expr<BinExprAST>(bin_op, std::move(lhs),
                                           std::move(rhs));
   } // go to top of while loop and parse other binary expressions
 }
 
 /// numberexpr ::= number
-std::unique_ptr<ExprAST> Parser::ParseNumberExpr() {
+UPExprAST Parser::ParseNumberExpr() {
 #ifdef BRTO_DEBUG_LVL_2
   std::cerr << "Parsing nunmberexpr\n";
 #endif
-  auto result = std::make_unique<NumberExprAST>(curr_tok_.val);
+  UPExprAST result = make_expr<NumLitExprAST>(GetTokenVal<double>(curr_tok_));
+
   GetNextToken(); // consume the number
+
   return result;
 }
 

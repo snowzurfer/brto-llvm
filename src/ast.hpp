@@ -28,132 +28,180 @@
 #include <memory>
 #include <vector>
 #include <iostream>
+#include <variant>
+#include <utility>
+#include <iostream>
+#include <ast_types.hpp>
 
 namespace brt {
 
-/// Base class for all the expression nodes
-class ExprAST {
-public:
-  ExprAST() = default;
-  ExprAST(const ExprAST &) = default;
-  ExprAST &operator=(const ExprAST &) = default;
-  ExprAST(ExprAST &&) = default;
-  ExprAST &operator=(ExprAST &&) = default;
+/// Emplace an instance of type T into a std::variant of type ASTNode
+template <class T, typename... Args>
+auto make_node(Args&&... args) {
+  return std::make_unique<ASTNode>(T{std::forward<Args>(args)...});
+}
 
-  virtual ~ExprAST() = default;
+/// Emplace an instance of type T into a std::variant of type ExprAST
+template <class T, typename... Args>
+    //std::enable_if<
+      //(std::is_same_v<NumLitExprAST, T> ||
+       //std::is_same_v<VarExprAST, T> ||
+       //std::is_same_v<BinExprAST, T> ||
+       //std::is_same_v<CallExprAST, T>)>>
+auto make_expr(Args&&... args) {
+  return std::make_unique<ExprAST>(T{std::forward<Args>(args)...});
+}
 
-}; // class ExprAST
+/// Expression for numeric literals
+class NumLitExprAST {
+ public:
+  NumLitExprAST(double val)
+      : val_{val} {}
+  NumLitExprAST() = default;
 
-/// Expression class for numeric literals e.g. "2.0"
-class NumberExprAST final : public ExprAST {
-public:
-  explicit NumberExprAST(double val) : ExprAST{}, val_{val} {}
-  NumberExprAST() = delete;
+  NumLitExprAST &operator=(const NumLitExprAST &) = delete;
+  NumLitExprAST(const NumLitExprAST &) = delete;
+  NumLitExprAST(NumLitExprAST &&) = default;
+  NumLitExprAST &operator=(NumLitExprAST &&) = default;
+  ~NumLitExprAST() = default;
 
-  NumberExprAST &operator=(const NumberExprAST &) = default;
-  NumberExprAST(const NumberExprAST &) = default;
-  NumberExprAST(NumberExprAST &&) = default;
-  NumberExprAST &operator=(NumberExprAST &&) = default;
-  ~NumberExprAST() = default;
+  const auto &val() const { return val_; }
+  auto &val() { return val_; }
 
 private:
   double val_;
 
-}; // class NumberExprAST
+}; // class NumLitExprAST
 
-/// Expression class for referencing a variable, e.g. "a"
-class VariableExprAST final : public ExprAST {
-public:
-  explicit VariableExprAST(std::string name)
-      : ExprAST{}, name_{std::move(name)} {}
-  VariableExprAST() = delete;
+/// Expression for variables
+class VarExprAST {
+ public:
+  VarExprAST(std::string name)
+      : name_{std::move(name)} {}
+  VarExprAST() = delete;
 
-  VariableExprAST &operator=(const VariableExprAST &) = default;
-  VariableExprAST(const VariableExprAST &) = default;
-  VariableExprAST(VariableExprAST &&) = default;
-  VariableExprAST &operator=(VariableExprAST &&) = default;
-  ~VariableExprAST() = default;
+  VarExprAST &operator=(const VarExprAST &) = delete;
+  VarExprAST(const VarExprAST &) = delete;
+  VarExprAST(VarExprAST &&) = default;
+  VarExprAST &operator=(VarExprAST &&) = default;
+  ~VarExprAST() = default;
+
+  const auto &name() const { return name_; }
+  auto &name() { return name_; }
 
 private:
   std::string name_;
 
-}; // class VariableExprAST
+}; // class VarExprAST
 
-class BinaryExprAST final : public ExprAST {
+/// Expression class for binary expressions
+class BinExprAST {
 public:
-  BinaryExprAST(char op, std::unique_ptr<ExprAST> lhs,
-                std::unique_ptr<ExprAST> rhs)
-      : ExprAST{}, lhs_{std::move(lhs)}, rhs_{std::move(rhs)}, op_(op) {}
-  BinaryExprAST() = delete;
+  BinExprAST(char op, UPExprAST lhs, UPExprAST rhs)
+      : lhs_{std::move(lhs)}, rhs_{std::move(rhs)}, op_(op) {}
+  BinExprAST() = delete;
 
-  BinaryExprAST &operator=(const BinaryExprAST &) = delete;
-  BinaryExprAST(const BinaryExprAST &) = delete;
-  BinaryExprAST(BinaryExprAST &&) = default;
-  BinaryExprAST &operator=(BinaryExprAST &&) = default;
-  ~BinaryExprAST() = default;
+  BinExprAST &operator=(const BinExprAST &) = delete;
+  BinExprAST(const BinExprAST &) = delete;
+  BinExprAST(BinExprAST &&) = default;
+  BinExprAST &operator=(BinExprAST &&) = default;
+  ~BinExprAST() = default;
+
+  const auto &lhs() const { return *lhs_.get(); }
+  auto &lhs() { return *lhs_.get(); }
+  const auto &rhs() const { return *rhs_.get(); }
+  auto &rhs() { return *rhs_.get(); }
+  char op() const { return op_; }
+  char op() { return op_; }
 
 private:
-  std::unique_ptr<ExprAST> lhs_, rhs_;
+  UPExprAST lhs_, rhs_;
   char op_;
 
-}; // class BinaryExprAST
-
+}; // class BinExprAST
 
 /// Expression class for function calls
-class CallExprAST final : public ExprAST {
+class CallExprAST {
 public:
-  CallExprAST(std::string callee, std::vector<std::unique_ptr<ExprAST>> args)
-      : ExprAST{}, callee_{std::move(callee)}, args_{std::move(args)} {}
+  CallExprAST(std::string callee, UPExprASTVec args)
+      : callee_{std::move(callee)}, args_{std::move(args)} {}
   CallExprAST() = delete;
 
   CallExprAST &operator=(const CallExprAST &) = delete;
   CallExprAST(const CallExprAST &) = delete;
+
   CallExprAST(CallExprAST &&) = default;
   CallExprAST &operator=(CallExprAST &&) = default;
   ~CallExprAST() = default;
 
+  const auto &callee() const { return callee_; }
+  auto &callee() { return callee_; }
+  const auto &args() const { return args_; }
+  auto &args() { return args_; }
+
 private:
   std::string callee_;
-  std::vector<std::unique_ptr<ExprAST>> args_;
+  UPExprASTVec args_;
 
 }; // class CallExprAst
 
 /// Class representing the prototype of a function, i.e. its signature
-class PrototypeAST {
+class ProtoAST {
 public:
-  PrototypeAST(std::string name, std::vector<std::string> args)
+  ProtoAST(std::string name, StrVec args)
       : name_{std::move(name)}, args_{std::move(args)} {}
-  PrototypeAST() = delete;
+
+  ProtoAST() = delete;
+  ProtoAST &operator=(const ProtoAST &) = delete;
+  ProtoAST(const ProtoAST &) = delete;
+  ProtoAST(ProtoAST &&) = default;
+  ProtoAST &operator=(ProtoAST &&) = default;
+  ~ProtoAST() = default;
+
+  const auto &name() const { return name_; }
+  auto &name() { return name_; }
+  const auto &args() const { return args_; }
+  auto &args() { return args_; }
 
 private:
   std::string name_;
-  std::vector<std::string> args_;
+  StrVec args_;
 
-}; // class PrototypeAST
+}; // class ProtoAST
 
 /// Class representing a function definition
-class FunctionAST {
+class FuncAST {
 public:
-  FunctionAST(std::unique_ptr<PrototypeAST> proto,
-              std::unique_ptr<ExprAST> body)
+  FuncAST(UPASTNode proto, UPExprAST body)
       : proto_{std::move(proto)}, body_{std::move(body)} {}
 
+  FuncAST() = delete;
+  FuncAST &operator=(const FuncAST &) = delete;
+  FuncAST(const FuncAST &) = delete;
+  FuncAST(FuncAST &&) = default;
+  FuncAST &operator=(FuncAST &&) = default;
+  ~FuncAST() = default;
+
+  const auto &proto() const { return *proto_.get(); }
+  auto &proto() { return *proto_.get(); }
+  const auto &body() const { return *body_.get(); }
+  auto &body() { return *body_.get(); }
+  auto &GetProtoNode() { return proto_; }
+
 private:
-  std::unique_ptr<PrototypeAST> proto_;
-  std::unique_ptr<ExprAST> body_;
+  UPASTNode proto_;
+  UPExprAST body_;
 
-}; // class FunctionAST
+}; // class FuncAST
 
-/// LogError* - These are little helper functions for error handling.
-/// TODO Use throw/catch instead
-std::unique_ptr<ExprAST> LogError(const std::string &str) {
-  std::cerr << "Error: " << str << "\n";
+// LogError* - These are little helper functions for error handling.
+// It's not recommended to use exceptions when working with LLVM
+template <typename T>
+T LogError(const std::string &str) {
+  std::cerr << kErrMsgPrefix << str << "\n";
   return nullptr;
 }
-std::unique_ptr<PrototypeAST> LogErrorP(const std::string &str) {
-  std::cerr << "Error: " << str << "\n";
-  return nullptr;
-}
+
 
 } // namespace brt
 
