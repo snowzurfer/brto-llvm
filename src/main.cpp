@@ -34,7 +34,7 @@ void MainLoop(brt::Driver &driver) {
   }
 }
 
-int main(int argc, char *argv[]) {
+int main() {
   brt::Driver driver{std::cin};
 
   // Run the main "interpreter loop"

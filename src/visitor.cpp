@@ -62,6 +62,7 @@ ExprVisitor::ExprVisitor(std::shared_ptr<Compiler> c)
     : c_{std::move(c)} {};
 
 Value *ExprVisitor::operator()(std::nullptr_t &arg) {
+  (void)arg;
   return nullptr;
 }
 
@@ -298,6 +299,7 @@ FuncVisitor::FuncVisitor(std::shared_ptr<Compiler> c)
     : c_{std::move(c)} {};
 
 Function *FuncVisitor::operator()(std::nullptr_t &arg) {
+  (void)arg;
   return nullptr;
 }
 

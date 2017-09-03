@@ -32,7 +32,7 @@
 #include <KaleidoscopeJIT.h>
 #include <variant>
 #include <iostream>
-#include <visitor.hpp>
+#include <ast_types.hpp>
 
 // Forward declarations
 namespace brt {
