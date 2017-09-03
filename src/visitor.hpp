@@ -52,6 +52,8 @@ class ExprVisitor {
   llvm::Value *operator()(VarExprAST &arg);
   llvm::Value *operator()(BinExprAST &arg);
   llvm::Value *operator()(CallExprAST &arg);
+  llvm::Value *operator()(IfExprAST &arg);
+  llvm::Value *operator()(ForExprAST &arg);
 
  private:
   std::shared_ptr<Compiler> c_;

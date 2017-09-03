@@ -145,6 +145,66 @@ private:
 
 }; // class CallExprAst
 
+/// Expression class for if/then/else.
+class IfExprAST {
+ public:
+  IfExprAST(UPExprAST cond, UPExprAST then, UPExprAST else_stm)
+      : cond_{std::move(cond)}, then_{std::move(then)},
+        else_{std::move(else_stm)} {}
+
+  IfExprAST() = delete;
+  IfExprAST &operator=(const IfExprAST &) = delete;
+  IfExprAST(const IfExprAST&) = delete;
+  IfExprAST(IfExprAST &&) = default;
+  IfExprAST &operator=(IfExprAST &&) = default;
+  ~IfExprAST() = default;
+
+  const auto &cond() const { return *cond_.get(); }
+  const auto &then() const { return *then_.get(); }
+  const auto &else_expr() const { return *else_.get(); }
+  auto &cond() { return *cond_.get(); }
+  auto &then() { return *then_.get(); }
+  auto &else_expr() { return *else_.get(); }
+
+ private:
+  UPExprAST cond_, then_, else_;
+
+}; // class IfExprAST
+
+/// Expression class for for loops
+class ForExprAST {
+ public:
+  ForExprAST(std::string var_name, UPExprAST start, UPExprAST end,
+             UPExprAST step, UPExprAST body)
+      : var_name_{std::move(var_name)}, start_{std::move(start)},
+        end_{std::move(end)}, step_{std::move(step)},
+        body_{std::move(body)} {}
+
+  ForExprAST() = delete;
+  ForExprAST &operator=(const ForExprAST &) = delete;
+  ForExprAST(const ForExprAST&) = delete;
+  ForExprAST(ForExprAST &&) = default;
+  ForExprAST &operator=(ForExprAST &&) = default;
+  ~ForExprAST() = default;
+
+  const auto &var_name() const { return var_name_; }
+  const auto &start() const { return *start_.get(); }
+  const auto &end() const { return *end_.get(); }
+  const auto &step() const { return *step_.get(); }
+  const auto &GetStepUP() const { return step_; }
+  const auto &body() const { return *body_.get(); }
+  auto &var_name() { return var_name_; }
+  auto &start() { return *start_.get(); }
+  auto &end() { return *end_.get(); }
+  auto &step() { return *step_.get(); }
+  auto &body() { return *body_.get(); }
+
+ private:
+  std::string var_name_;
+  UPExprAST start_, end_, step_, body_;
+
+}; // class ForExprAST
+
 /// Class representing the prototype of a function, i.e. its signature
 class ProtoAST {
 public:

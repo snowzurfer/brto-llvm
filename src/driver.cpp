@@ -89,11 +89,11 @@ Driver::Driver(std::istream &istream)
 template <typename Tast>
 auto RunFuncVisitor(std::shared_ptr<Compiler> c, Tast &ast) {
     auto ir = std::visit(FuncVisitor{std::move(c)}, ast);
-#ifdef BRTO_DEBUG_LVL_2
+//#ifdef BRTO_DEBUG_LVL_2
     if (ir) {
       ir->dump();
     };
-#endif
+//#endif
     return ir;
 }
 

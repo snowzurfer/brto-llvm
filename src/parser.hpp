@@ -45,6 +45,13 @@ enum class TokenType {
   identifier,
   number,
 
+  // Control
+  if_stm,
+  then,
+  else_stm,
+  for_loop,
+  in,
+
   l_bracket,
   r_bracket,
   comma,
@@ -126,6 +133,8 @@ class Parser {
   UPExprAST ParseExpression();
   UPExprAST ParseBinOpRHS(int expr_prec, UPExprAST lhs);
   UPExprAST ParseNumberExpr();
+  UPExprAST ParseIfExpr();
+  UPExprAST ParseForExpr();
 
 }; // class Parser
 

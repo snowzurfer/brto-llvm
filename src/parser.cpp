@@ -39,6 +39,11 @@ namespace brt {
 
 const std::string kCommandTokenDef = "def";
 const std::string kCommandTokenExt = "extern";
+const std::string kCommandTokenIf = "if";
+const std::string kCommandTokenThen = "then";
+const std::string kCommandTokenElse= "else";
+const std::string kCommandTokenFor = "for";
+const std::string kCommandTokenIn = "in";
 const char kCommentToken = '#';
 
 Lexer::Lexer(std::istream &istream)
@@ -66,6 +71,21 @@ Token Lexer::GetNextTokenInternal() {
     }
     if (identifier_str == kCommandTokenExt) {
       return {TokenType::ext, std::move(identifier_str)};
+    }
+    if (identifier_str == kCommandTokenIf) {
+      return {TokenType::if_stm, std::move(identifier_str)};
+    }
+    if (identifier_str == kCommandTokenThen) {
+      return {TokenType::then, std::move(identifier_str)};
+    }
+    if (identifier_str == kCommandTokenElse) {
+      return {TokenType::else_stm, std::move(identifier_str)};
+    }
+    if (identifier_str == kCommandTokenFor) {
+      return {TokenType::for_loop, std::move(identifier_str)};
+    }
+    if (identifier_str == kCommandTokenIn) {
+      return {TokenType::in, std::move(identifier_str)};
     }
     return {TokenType::identifier, std::move(identifier_str)};
   }
@@ -150,6 +170,17 @@ const std::string kCouldntParseIdentExpr = "Couldn't parse Identifier Expr";
 const std::string kCouldntParseParenExpr = "Couldn't parse Paren Expr";
 const std::string kCouldntParseExpr = "Couldn't parse Expr";
 const std::string kCouldntParseBinOpExpr = "Couldn't parse Binop Expr";
+const std::string kCouldntParseIfExprErrStr = "Couldn't parse If Expr";
+const std::string kExpectedThenErrStr = "Expected then";
+const std::string kExpectedElseErrStr = "Expected else";
+const std::string kExpectedIdentAfterForErrStr =
+  "Expected identifier after for";
+const std::string kExpectedEqualAfterForErrStr =
+  "Expected '=' after for";
+const std::string kCouldntParseForExprErrStr = "Couldn't parse For Expr";
+const std::string kExpectedCommaAfterForErrStr =
+"Expected ',' after for start value";
+const std::string kExpectedInAfterForErrStr = "expected 'in' after for";
 
 Parser::Parser(Lexer::SP lexer) : lexer_{std::move(lexer)} {
   binop_precedence_['<'] = 10;
@@ -275,6 +306,12 @@ UPExprAST Parser::ParsePrimary() {
     }
     case TokenType::l_bracket: {
       return ParseParenExpr();
+    }
+    case TokenType::if_stm: {
+      return ParseIfExpr();
+    }
+    case TokenType::for_loop: {
+      return ParseForExpr();
     }
     default: {
       return LogError<UPExprAST>(kUnknTokExpectingExprErrStr);
@@ -411,6 +448,99 @@ UPExprAST Parser::ParseNumberExpr() {
   GetNextToken(); // consume the number
 
   return result;
+}
+
+/// ifexpr ::= 'if' expression 'then' expression 'else' expression
+UPExprAST Parser::ParseIfExpr() {
+  GetNextToken();  // eat the if.
+
+  // Parse the condition
+  auto cond = ParseExpression();
+  if (!cond) {
+    return LogError<UPExprAST>(kCouldntParseIfExprErrStr);
+  }
+
+  if (curr_tok_.type != TokenType::then) {
+    return LogError<UPExprAST>(kExpectedThenErrStr);
+  }
+
+  GetNextToken();  // eat the then
+
+  auto then = ParseExpression();
+  if (!then) {
+    return LogError<UPExprAST>(kCouldntParseIfExprErrStr);
+  }
+
+  if (curr_tok_.type != TokenType::else_stm) {
+    return LogError<UPExprAST>(kExpectedElseErrStr);
+  }
+
+  GetNextToken();
+
+  auto else_expr = ParseExpression();
+  if (!else_expr) {
+    return LogError<UPExprAST>(kCouldntParseIfExprErrStr);
+  }
+
+  return make_expr<IfExprAST>(std::move(cond), std::move(then),
+                              std::move(else_expr));
+}
+
+UPExprAST Parser::ParseForExpr() {
+  GetNextToken();  // eat the for.
+
+  if (curr_tok_.type != TokenType::identifier) {
+    return LogError<UPExprAST>(kExpectedIdentAfterForErrStr);
+  }
+
+  std::string id_name = std::get<std::string>(curr_tok_.val);
+  GetNextToken();  // eat identifier.
+
+  if (std::get<char>(curr_tok_.val) != '=') {
+    return LogError<UPExprAST>(kExpectedEqualAfterForErrStr);
+  }
+
+  GetNextToken();  // eat '='.
+
+  auto start = ParseExpression();
+  if (!start) {
+    return LogError<UPExprAST>(kCouldntParseForExprErrStr);
+  }
+
+  if (std::get<char>(curr_tok_.val) != ',') {
+    return LogError<UPExprAST>(kExpectedCommaAfterForErrStr);
+  }
+
+  GetNextToken();
+
+  auto end = ParseExpression();
+  if (!end) {
+    return LogError<UPExprAST>(kCouldntParseForExprErrStr);
+  }
+
+  // The step value is optional.
+  UPExprAST step;
+  if (std::get<char>(curr_tok_.val) == ',') {
+    GetNextToken();
+    step = ParseExpression();
+    if (!step) {
+      return LogError<UPExprAST>(kCouldntParseForExprErrStr);
+    }
+  }
+
+  if (curr_tok_.type != TokenType::in) {
+    return LogError<UPExprAST>(kExpectedInAfterForErrStr);
+  }
+
+  GetNextToken();  // eat 'in'.
+
+  auto body = ParseExpression();
+  if (!body) {
+      return LogError<UPExprAST>(kCouldntParseForExprErrStr);
+  }
+
+  return make_expr<ForExprAST>(id_name, std::move(start), std::move(end),
+                               std::move(step), std::move(body));
 }
 
 } // namespace brt

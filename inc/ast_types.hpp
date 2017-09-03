@@ -41,10 +41,12 @@ class BinExprAST;
 class CallExprAST;
 class ProtoAST;
 class FuncAST;
+class IfExprAST;
+class ForExprAST;
 
 /// Type used to represent all the expression production rules
 using ExprAST = std::variant<std::nullptr_t, NumLitExprAST, VarExprAST,
-                             BinExprAST, CallExprAST>;
+                             BinExprAST, CallExprAST, IfExprAST, ForExprAST>;
 using ASTNode = std::variant<std::nullptr_t, ProtoAST, FuncAST>;
 
 /// Use type aliasing to improve code syntax

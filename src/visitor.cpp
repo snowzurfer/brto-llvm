@@ -22,6 +22,13 @@ const std::string kInvalidBinOpErrStr = "Invalid binary operator";
 const std::string kBodyReadingErrErrStr = "Error reading function body";
 const std::string kCouldntVisitFunctionASTErrStr =
   "Couldn't produce IR for Func AST";
+const std::string kCouldntVisitIfExprASTErrStr =
+  "Couldn't produce IR for If Expr AST";
+const std::string kCouldntVisitForExprASTErrStr =
+  "Couldn't produce IR for For loop Expr AST";
+const std::string kCouldntVisitBinExprASTErrStr =
+  "Couldn't produce IR for For Bin Expr AST";
+
 const char kAddOp = '+';
 const char kSubOp = '-';
 const char kMulOp = '*';
@@ -78,7 +85,9 @@ Value *ExprVisitor::operator()(BinExprAST &arg) {
 
   auto lhval = std::visit(*this, arg.lhs());
   auto rhval = std::visit(*this, arg.rhs());
-  assert(lhval && rhval);
+  if (!lhval || !rhval) {
+    return LogError<Value *>(kCouldntVisitBinExprASTErrStr);
+  }
 
   switch (arg.op()) {
     case kAddOp: {
@@ -124,6 +133,165 @@ Value *ExprVisitor::operator()(CallExprAST &arg) {
   }
 
   return c_->builder.CreateCall(callee_func, std::move(callee_args), "calltmp");
+}
+
+Value *ExprVisitor::operator()(IfExprAST &arg) {
+  using llvm::BasicBlock;
+  using llvm::APFloat;
+  using llvm::Type;
+  using llvm::ConstantFP;
+
+  auto cond_val = std::visit(*this, arg.cond());
+  if (!cond_val) {
+    return LogError<Value *>(kCouldntVisitIfExprASTErrStr);
+  }
+
+  // Convert condition to a bool by comparing non-equal to 0.0
+  cond_val = c_->builder.CreateFCmpONE(cond_val,
+                                       ConstantFP::get(c_->context,
+                                                       APFloat(0.0)),
+                                       "ifcond");
+
+  // Get current func object being built
+  auto f = c_->builder.GetInsertBlock()->getParent();
+
+  // Create blocks for the then and else cases. Insert the "then" block at the
+  // end of the function
+  auto then_bb = BasicBlock::Create(c_->context, "then", f);
+  auto else_bb = BasicBlock::Create(c_->context, "else");
+  auto merge_bb = BasicBlock::Create(c_->context, "ifcont");
+
+  // Emit the condition; this works even if the else BB has not been inserted
+  // into the function yet. It is standard to do so in LLVM
+  c_->builder.CreateCondBr(cond_val, then_bb, else_bb);
+
+  // Emit the then value
+  c_->builder.SetInsertPoint(then_bb);
+
+  auto then_val = std::visit(*this, arg.then());
+  if (!then_val) {
+    return LogError<Value *>(kCouldntVisitIfExprASTErrStr);
+  }
+
+  c_->builder.CreateBr(merge_bb);
+  // Codegen of "then" can change the current block (e.g. nested if/then/else)
+  // so we account this using the following line
+  then_bb = c_->builder.GetInsertBlock();
+
+  // Emit else block
+  f->getBasicBlockList().push_back(else_bb);
+  c_->builder.SetInsertPoint(else_bb);
+
+  auto else_val = std::visit(*this, arg.else_expr());
+  if (!else_val) {
+    return LogError<Value *>(kCouldntVisitIfExprASTErrStr);
+  }
+
+  c_->builder.CreateBr(merge_bb);
+  // Codegen of "else" can change the current block (e.g. nested if/then/else)
+  // so we account this using the following line
+  else_bb = c_->builder.GetInsertBlock();
+
+  // Emit merge block
+  f->getBasicBlockList().push_back(merge_bb);
+  c_->builder.SetInsertPoint(merge_bb);
+  auto phi_node = c_->builder.CreatePHI(Type::getDoubleTy(c_->context), 2,
+                                        "iftmp");
+
+  phi_node->addIncoming(then_val, then_bb);
+  phi_node->addIncoming(else_val, else_bb);
+
+  return phi_node;
+}
+
+Value *ExprVisitor::operator()(ForExprAST &arg) {
+  using llvm::Type;
+  using llvm::APFloat;
+  using llvm::Constant;
+  using llvm::ConstantFP;
+  using llvm::BasicBlock;
+
+  // Emit the start code, without 'variable' in scope
+  auto start_val = std::visit(*this, arg.start());
+  if (!start_val) {
+    return LogError<Value *>(kCouldntVisitForExprASTErrStr);
+  }
+
+  // Create basic block for the loop header
+  auto f = c_->builder.GetInsertBlock()->getParent();
+  auto preheader_bb = c_->builder.GetInsertBlock();
+  auto loop_bb = BasicBlock::Create(c_->context, "loop", f);
+
+  // Insert explicit fall through from the current block to the loop BB
+  c_->builder.CreateBr(loop_bb);
+
+  // Start inserion in the loop BB
+  c_->builder.SetInsertPoint(loop_bb);
+
+  // Start the PHI node with an entry for start
+  auto phi_var = c_->builder.CreatePHI(Type::getDoubleTy(c_->context), 2,
+                                       arg.var_name());
+  phi_var->addIncoming(start_val, preheader_bb);
+
+  // Within the loop, the variable is defined equal to the PHI node. If it
+  // shadows an existing variable, we have to restore it, so save it now
+  auto old_var = c_->named_values[arg.var_name()];
+  c_->named_values[arg.var_name()] = phi_var;
+
+  // Emit the body of the loop.  This, like any other expr, can change the
+  // current BB.  Note that we ignore the value computed by the body, but don't
+  // allow an error.
+  if (!std::visit(*this, arg.body())) {
+    return LogError<Value *>(kCouldntVisitForExprASTErrStr);
+  }
+
+  // Emit the step value.
+  Value *step_val = nullptr;
+  if (arg.GetStepUP()) {
+    step_val = std::visit(*this, arg.step());
+    if (!step_val) {
+      return LogError<Value *>(kCouldntVisitForExprASTErrStr);
+    }
+  } else {
+    // If not specified, use 1.0.
+    step_val = ConstantFP::get(c_->context, APFloat(1.0));
+  }
+
+  auto next_var = c_->builder.CreateFAdd(phi_var, step_val, "nextvar");
+
+  // Compute the end condition.
+  auto end_cond = std::visit(*this, arg.end());
+  if (!end_cond) {
+      return LogError<Value *>(kCouldntVisitForExprASTErrStr);
+  }
+
+  // Convert condition to a bool by comparing non-equal to 0.0.
+  end_cond = c_->builder.CreateFCmpONE(end_cond, ConstantFP::get(c_->context,
+                                                                 APFloat(0.0)),
+                                       "loopcond");
+  // Create the "after loop" block and insert it.
+  auto loopend_bb = c_->builder.GetInsertBlock();
+  auto *after_bb = BasicBlock::Create(c_->context, "afterloop", f);
+
+  // Insert the conditional branch into the end of LoopEndBB.
+  c_->builder.CreateCondBr(end_cond, loop_bb, after_bb);
+
+  // Any new code will be inserted in AfterBB.
+  c_->builder.SetInsertPoint(after_bb);
+
+  // Add a new entry to the PHI node for the backedge.
+  phi_var->addIncoming(next_var, loopend_bb);
+
+  // Restore the unshadowed variable.
+  if (old_var) {
+    c_->named_values[arg.var_name()] = old_var;
+  }
+  else {
+    c_->named_values.erase(arg.var_name());
+  }
+
+  // for expr always returns 0.0.
+  return Constant::getNullValue(Type::getDoubleTy(c_->context));
 }
 
 FuncVisitor::FuncVisitor(std::shared_ptr<Compiler> c)
@@ -186,7 +354,7 @@ Function *FuncVisitor::operator()(FuncAST &arg) {
     llvm::verifyFunction(*f);
 
     // Run the optimizer on the function
-    c_->fpm->run(*f);
+    //c_->fpm->run(*f);
 
     return f;
   }
